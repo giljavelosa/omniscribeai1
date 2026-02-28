@@ -55,9 +55,10 @@ const dataLayer: FastifyPluginAsync = async (app) => {
   }
 
   const repositories = createRepositories(pool);
-  const redisReachable = env.REDIS_URL ? await canReachRedis(env.REDIS_URL) : false;
+  const isTestRuntime = env.NODE_ENV === 'test' || process.env.VITEST === 'true';
+  const redisReachable = !isTestRuntime && env.REDIS_URL ? await canReachRedis(env.REDIS_URL) : false;
   const factExtractionQueue = createFactExtractionQueue({
-    forceInMemory: Boolean(env.REDIS_URL) && !redisReachable
+    forceInMemory: isTestRuntime || (Boolean(env.REDIS_URL) && !redisReachable)
   });
   const writebackWorker = createWritebackWorkerStub();
   factExtractionQueue.registerProcessor(createFactExtractionWorker(repositories));

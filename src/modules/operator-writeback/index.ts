@@ -233,6 +233,10 @@ export const operatorWritebackRoutes: FastifyPluginAsync = async (app) => {
     const relatedJobIds = new Set(
       [job.jobId, job.replayOfJobId, job.replayedJobId].filter((value): value is string => Boolean(value))
     );
+    const replayJob = job.replayedJobId
+      ? await app.repositories.writeback.getById(job.replayedJobId)
+      : null;
+
     const timeline = sanitizeTimeline(
       (await app.repositories.audit.listByNote(job.noteId)).filter((event) =>
         readEventJobIds(event.payload).some((id) => relatedJobIds.has(id))
@@ -243,7 +247,7 @@ export const operatorWritebackRoutes: FastifyPluginAsync = async (app) => {
       ok: true,
       data: sanitize({
         deadLetter: toDeadLetterSummary(job),
-        replayLinkage: toReplayLinkageStatus(job, null),
+        replayLinkage: toReplayLinkageStatus(job, replayJob),
         timeline
       })
     });

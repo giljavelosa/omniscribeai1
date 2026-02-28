@@ -7,7 +7,7 @@ import { requireMutationApiKey } from '../../plugins/apiKeyAuth.js';
 const composeSchema = z.object({
   sessionId: z.string(),
   division: z.enum(['medical', 'rehab', 'bh']),
-  noteFamily: z.string(),
+  noteFamily: z.string().trim().min(1),
   useExistingFacts: z.boolean().default(false)
 });
 

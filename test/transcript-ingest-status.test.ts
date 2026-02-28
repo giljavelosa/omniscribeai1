@@ -71,8 +71,13 @@ describe('transcript ingest + session status', () => {
 
     expect(res.statusCode).toBe(404);
     const body = res.json();
-    expect(body.ok).toBe(false);
-    expect(body.data.sessionId).toBe('missing');
+    expect(body).toMatchObject({
+      ok: false,
+      error: {
+        code: 'SESSION_NOT_FOUND'
+      },
+      correlationId: expect.any(String)
+    });
 
     await app.close();
   });

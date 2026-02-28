@@ -14,7 +14,8 @@
     "infra:up": "docker compose up -d db redis",
     "infra:down": "docker compose down",
     "infra:logs": "docker compose logs -f db redis",
-    "local:up": "npm run infra:up && npm run migrate && npm run dev"
+    "local:up": "npm run infra:up && npm run migrate && npm run dev",
+    "verify:all": "bash scripts/phase1-verify.sh"
   },
   "keywords": [],
   "author": "",

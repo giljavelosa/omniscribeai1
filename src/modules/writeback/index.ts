@@ -12,10 +12,28 @@ const writebackSchema = z.object({
   idempotencyKey: z.string().min(1)
 });
 
-const transitionSchema = z.object({
-  status: z.enum(['queued', 'in_progress', 'succeeded', 'failed']),
-  lastError: z.string().min(1).optional()
-});
+const transitionSchema = z
+  .object({
+    status: z.enum(['queued', 'in_progress', 'succeeded', 'failed']),
+    lastError: z.string().trim().min(1).optional()
+  })
+  .superRefine((payload, ctx) => {
+    if (payload.status === 'failed' && !payload.lastError) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'lastError is required when status is failed',
+        path: ['lastError']
+      });
+    }
+
+    if (payload.status !== 'failed' && payload.lastError) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'lastError is only allowed when status is failed',
+        path: ['lastError']
+      });
+    }
+  });
 
 const ALLOWED_JOB_TRANSITIONS: Record<string, Set<string>> = {
   queued: new Set(['in_progress', 'failed']),

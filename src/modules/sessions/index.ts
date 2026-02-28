@@ -1,4 +1,5 @@
 import type { FastifyPluginAsync } from 'fastify';
+import { sendApiError } from '../../lib/apiError.js';
 
 export const sessionsRoutes: FastifyPluginAsync = async (app) => {
   app.get('/sessions/:sessionId/status', async (req, reply) => {
@@ -6,13 +7,7 @@ export const sessionsRoutes: FastifyPluginAsync = async (app) => {
 
     const session = await app.repositories.sessions.getById(sessionId);
     if (!session) {
-      return reply.code(404).send({
-        ok: false,
-        data: {
-          sessionId,
-          message: 'session not found'
-        }
-      });
+      return sendApiError(req, reply, 404, 'SESSION_NOT_FOUND', `session not found: ${sessionId}`);
     }
 
     const [segmentsIngested, events] = await Promise.all([

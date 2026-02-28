@@ -223,6 +223,89 @@ describe('P0 API safety rails', () => {
     expect(secondBody.data.idempotencyKey).toBe(payload.idempotencyKey);
   });
 
+
+  it('requires API key on fact-ledger extraction endpoint', async () => {
+    const res = await injectJson(
+      'POST',
+      '/api/v1/fact-ledger/extract',
+      {
+        sessionId: 'sess-facts-unauth'
+      },
+      false
+    );
+
+    expect(res.statusCode).toBe(401);
+    expect(res.json()).toMatchObject({
+      ok: false,
+      error: {
+        code: 'UNAUTHORIZED'
+      }
+    });
+  });
+
+  it('rejects blank noteFamily to keep compose contract deterministic', async () => {
+    const res = await injectJson('POST', '/api/v1/note-compose', {
+      sessionId: 'sess-notefamily-blank',
+      division: 'medical',
+      noteFamily: '   '
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toMatchObject({
+      ok: false,
+      error: {
+        code: 'VALIDATION_ERROR'
+      }
+    });
+  });
+
+  it('requires lastError only for failed writeback transitions', async () => {
+    const composeRes = await injectJson('POST', '/api/v1/note-compose', {
+      sessionId: 'sess-transition-contract-1',
+      division: 'medical',
+      noteFamily: 'progress_note'
+    });
+    const noteId = composeRes.json().data.noteId;
+
+    await injectJson('POST', '/api/v1/validation-gate', {
+      noteId,
+      unsupportedStatementRate: 0
+    });
+
+    const writebackRes = await injectJson('POST', '/api/v1/writeback/jobs', {
+      noteId,
+      ehr: 'nextgen',
+      idempotencyKey: 'idem-transition-contract-1'
+    });
+
+    const jobId = writebackRes.json().data.jobId;
+
+    const missingLastError = await injectJson('POST', '/api/v1/writeback/jobs/' + jobId + '/transition', {
+      status: 'failed'
+    });
+
+    expect(missingLastError.statusCode).toBe(400);
+    expect(missingLastError.json()).toMatchObject({
+      ok: false,
+      error: {
+        code: 'VALIDATION_ERROR'
+      }
+    });
+
+    const illegalLastError = await injectJson('POST', '/api/v1/writeback/jobs/' + jobId + '/transition', {
+      status: 'in_progress',
+      lastError: 'should-not-be-present'
+    });
+
+    expect(illegalLastError.statusCode).toBe(400);
+    expect(illegalLastError.json()).toMatchObject({
+      ok: false,
+      error: {
+        code: 'VALIDATION_ERROR'
+      }
+    });
+  });
+
   it('rejects illegal writeback status transitions with explicit error code', async () => {
     const composeRes = await injectJson('POST', '/api/v1/note-compose', {
       sessionId: 'sess-transition-1',

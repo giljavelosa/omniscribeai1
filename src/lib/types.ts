@@ -3,3 +3,12 @@ export type ApiEnvelope<T> = {
   data: T;
   correlationId?: string;
 };
+
+export type ApiErrorEnvelope = {
+  ok: false;
+  error: {
+    code: string;
+    message: string;
+  };
+  correlationId: string;
+};

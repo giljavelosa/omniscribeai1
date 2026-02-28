@@ -2,6 +2,8 @@ import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import { env } from './config/env.js';
 import { correlationIdPlugin } from './plugins/correlationId.js';
+import { securityLoggingPlugin } from './plugins/securityLogging.js';
+import { errorEnvelopePlugin } from './plugins/errorEnvelope.js';
 import { transcriptIngestRoutes } from './modules/transcript-ingest/index.js';
 import { factLedgerRoutes } from './modules/fact-ledger/index.js';
 import { noteComposeRoutes } from './modules/note-compose/index.js';
@@ -24,6 +26,8 @@ export function buildApp() {
 
   app.register(cors);
   app.register(correlationIdPlugin);
+  app.register(securityLoggingPlugin);
+  app.register(errorEnvelopePlugin);
 
   app.get('/health', async () => ({ ok: true, service: 'omniscribeai1-api' }));
 

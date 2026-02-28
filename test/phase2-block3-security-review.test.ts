@@ -128,6 +128,75 @@ describe('Phase2 Block3 security checks for dead-letter + replay surfaces', () =
     await app.close();
   });
 
+  it('does not leak internal idempotency or raw error-detail payloads in operator dead-letter replay/ack responses', async () => {
+    const app = buildApp();
+    const headers = { 'x-api-key': API_KEY };
+
+    const compose = await app.inject({
+      method: 'POST',
+      url: '/api/v1/note-compose',
+      headers,
+      payload: {
+        sessionId: 'sess-phase2-block6-no-internal-leak',
+        division: 'medical',
+        noteFamily: 'progress_note'
+      }
+    });
+    const noteId = compose.json().data.noteId as string;
+
+    await app.inject({
+      method: 'POST',
+      url: '/api/v1/validation-gate',
+      headers,
+      payload: { noteId, unsupportedStatementRate: 0 }
+    });
+
+    const create = await app.inject({
+      method: 'POST',
+      url: '/api/v1/writeback/jobs',
+      headers,
+      payload: { noteId, ehr: 'nextgen', idempotencyKey: 'idem-phase2-block6-no-internal-leak' }
+    });
+    const jobId = create.json().data.jobId as string;
+
+    await app.inject({
+      method: 'POST',
+      url: `/api/v1/writeback/jobs/${jobId}/transition`,
+      headers,
+      payload: {
+        status: 'failed',
+        lastError: 'upstream rejected payload',
+        lastErrorDetail: {
+          reasonCode: 'VALIDATION_ERROR',
+          authToken: 'secret-token-value'
+        }
+      }
+    });
+
+    const replay = await app.inject({
+      method: 'POST',
+      url: `/api/v1/operator/writeback/dead-letters/${jobId}/replay`,
+      headers
+    });
+
+    expect(replay.statusCode).toBe(200);
+    expect(replay.json().data.replayJob.idempotencyKey).toBeUndefined();
+    expect(replay.json().data.replayJob.lastErrorDetail).toBeUndefined();
+    expect(replay.json().data.replayJob.attemptHistory).toBeUndefined();
+
+    const ack = await app.inject({
+      method: 'POST',
+      url: `/api/v1/operator/writeback/dead-letters/${jobId}/acknowledge`,
+      headers
+    });
+    expect(ack.statusCode).toBe(200);
+    expect(ack.json().data.idempotencyKey).toBeUndefined();
+    expect(ack.json().data.lastErrorDetail).toBeUndefined();
+    expect(ack.json().data.attemptHistory).toBeUndefined();
+
+    await app.close();
+  });
+
   it('rejects non-uuid job ids for writeback and operator job detail routes', async () => {
     const app = buildApp();
     const headers = { 'x-api-key': API_KEY };

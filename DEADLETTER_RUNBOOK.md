@@ -30,6 +30,7 @@ Follow this sequence exactly:
 4. **Per-item triage**
    - `GET /operator/writeback/dead-letters/:id`
    - `GET /operator/writeback/dead-letters/:id/history`
+   - `GET /operator/writeback/dead-letters/:id/replay-status`
 5. **Action decision**
    - Acknowledge: `POST /operator/writeback/dead-letters/:id/acknowledge`
    - Replay: `POST /operator/writeback/dead-letters/:id/replay`
@@ -52,6 +53,7 @@ Follow this sequence exactly:
 - `GET /operator/writeback/dead-letters`
 - `GET /operator/writeback/dead-letters/:id`
 - `GET /operator/writeback/dead-letters/:id/history`
+- `GET /operator/writeback/dead-letters/:id/replay-status`
 - `POST /operator/writeback/dead-letters/:id/acknowledge`
 - `POST /operator/writeback/dead-letters/:id/replay`
 - `GET /operator/writeback/jobs/:jobId`
@@ -91,6 +93,15 @@ curl -s "$BASE_URL/api/v1/operator/writeback/dead-letters/$JOB_ID" \
 JOB_ID=<dead_letter_job_id>
 
 curl -s "$BASE_URL/api/v1/operator/writeback/dead-letters/$JOB_ID/history" \
+  -H "X-API-Key: $API_KEY"
+```
+
+### E) Dead-letter replay linkage status
+
+```bash
+JOB_ID=<dead_letter_job_id>
+
+curl -s "$BASE_URL/api/v1/operator/writeback/dead-letters/$JOB_ID/replay-status" \
   -H "X-API-Key: $API_KEY"
 ```
 
@@ -146,6 +157,9 @@ curl -s "$BASE_URL/api/v1/operator/writeback/status/summary?recentHours=1" \
 
 - `401 UNAUTHORIZED` — missing/invalid API key
 - `404 DEAD_LETTER_NOT_FOUND` — job not found or not a dead-letter job
+- `409 DEAD_LETTER_REPLAY_REQUIRES_DEAD_FAILED` — replay attempted for non-`dead_failed` item
+- `409 WRITEBACK_REPLAY_ALREADY_EXISTS` — replay already linked for this dead-letter item
+- `409 DEAD_LETTER_ALREADY_ACKNOWLEDGED` — dead-letter item already acknowledged
 - `409 ILLEGAL_NOTE_STATE_TRANSITION` — replay guard prevented unsafe state transition
 - `409 WRITEBACK_PRECONDITION_FAILED` — related note/job precondition failed
 - `400 VALIDATION_ERROR` — malformed ID/request
@@ -169,6 +183,7 @@ curl -s "$BASE_URL/api/v1/operator/writeback/status/summary?recentHours=24" -H "
 curl -s "$BASE_URL/api/v1/operator/writeback/dead-letters?limit=50" -H "X-API-Key: $API_KEY"
 curl -s "$BASE_URL/api/v1/operator/writeback/dead-letters/$JOB_ID" -H "X-API-Key: $API_KEY"
 curl -s "$BASE_URL/api/v1/operator/writeback/dead-letters/$JOB_ID/history" -H "X-API-Key: $API_KEY"
+curl -s "$BASE_URL/api/v1/operator/writeback/dead-letters/$JOB_ID/replay-status" -H "X-API-Key: $API_KEY"
 curl -s -X POST "$BASE_URL/api/v1/operator/writeback/dead-letters/$JOB_ID/acknowledge" -H "X-API-Key: $API_KEY" -H 'content-type: application/json' -d '{"reason":"Deferred pending fix"}'
 curl -s -X POST "$BASE_URL/api/v1/operator/writeback/dead-letters/$JOB_ID/replay" -H "X-API-Key: $API_KEY"
 ```

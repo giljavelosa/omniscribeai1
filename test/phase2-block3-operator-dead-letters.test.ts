@@ -306,7 +306,7 @@ describe('Phase2 Block3 operator dead-letter APIs', () => {
     const replayJobId = replay.json().data.replayJob.jobId as string;
     expect(replayJobId).not.toBe(originalJobId);
     expect(replay.json().data.originalJob.replayedJobId).toBe(replayJobId);
-    expect(replay.json().data.replayJob.idempotencyKey).not.toBe('idem-phase2-block3-replay');
+    expect(replay.json().data.replayJob.idempotencyKey).toBeUndefined();
 
     const persistedOriginal = await app.repositories.writeback.getById(originalJobId);
     const persistedReplay = await app.repositories.writeback.getById(replayJobId);
@@ -404,6 +404,113 @@ describe('Phase2 Block3 operator dead-letter APIs', () => {
 
     const persistedOriginal = await app.repositories.writeback.getById(originalJobId);
     expect(persistedOriginal?.replayedJobId).toBe(replayJobs[0].jobId);
+
+    await app.close();
+  });
+
+  it('returns replay linkage status in dedicated replay-status endpoint with stable envelopes', async () => {
+    const app = buildApp();
+    const headers = { 'x-api-key': TEST_API_KEY };
+
+    const compose = await app.inject({
+      method: 'POST',
+      url: '/api/v1/note-compose',
+      headers,
+      payload: {
+        sessionId: 'sess-phase2-block6-replay-status',
+        division: 'medical',
+        noteFamily: 'progress_note'
+      }
+    });
+    const noteId = compose.json().data.noteId as string;
+
+    await app.inject({
+      method: 'POST',
+      url: '/api/v1/validation-gate',
+      headers,
+      payload: { noteId, unsupportedStatementRate: 0 }
+    });
+
+    const create = await app.inject({
+      method: 'POST',
+      url: '/api/v1/writeback/jobs',
+      headers,
+      payload: { noteId, ehr: 'nextgen', idempotencyKey: 'idem-phase2-block6-replay-status' }
+    });
+    const originalJobId = create.json().data.jobId as string;
+
+    await app.inject({
+      method: 'POST',
+      url: `/api/v1/writeback/jobs/${originalJobId}/transition`,
+      headers,
+      payload: {
+        status: 'failed',
+        lastError: 'target schema mismatch',
+        lastErrorDetail: { reasonCode: 'validation_error' }
+      }
+    });
+
+    const beforeReplay = await app.inject({
+      method: 'GET',
+      url: `/api/v1/operator/writeback/dead-letters/${originalJobId}/replay-status`,
+      headers
+    });
+    expect(beforeReplay.statusCode).toBe(200);
+    expect(beforeReplay.json()).toMatchObject({
+      ok: true,
+      data: {
+        deadLetter: {
+          jobId: originalJobId,
+          reasonCode: 'VALIDATION_ERROR'
+        },
+        replayLinkage: {
+          originalJobId,
+          hasReplay: false,
+          isReplay: false,
+          replayedJobId: null,
+          replayJobStatus: null
+        }
+      }
+    });
+
+    const replay = await app.inject({
+      method: 'POST',
+      url: `/api/v1/operator/writeback/dead-letters/${originalJobId}/replay`,
+      headers
+    });
+    const replayJobId = replay.json().data.replayJob.jobId as string;
+
+    const afterReplay = await app.inject({
+      method: 'GET',
+      url: `/api/v1/operator/writeback/dead-letters/${originalJobId}/replay-status`,
+      headers
+    });
+    expect(afterReplay.statusCode).toBe(200);
+    expect(afterReplay.json()).toMatchObject({
+      ok: true,
+      data: {
+        replayLinkage: {
+          originalJobId,
+          hasReplay: true,
+          replayedJobId: replayJobId,
+          replayJobStatus: 'queued'
+        }
+      }
+    });
+
+    const notFound = await app.inject({
+      method: 'GET',
+      url: '/api/v1/operator/writeback/dead-letters/00000000-0000-4000-8000-000000000888/replay-status',
+      headers
+    });
+    expect(notFound.statusCode).toBe(404);
+    expect(notFound.json()).toMatchObject({
+      ok: false,
+      error: {
+        code: DEAD_LETTER_ERROR_CODE.NOT_FOUND
+      },
+      correlationId: expect.any(String)
+    });
 
     await app.close();
   });

@@ -4,6 +4,8 @@ import { z } from 'zod';
 import { sendApiError } from '../../lib/apiError.js';
 import { canTransitionNoteStatus } from '../../lib/noteStateMachine.js';
 import { redactSensitive } from '../../lib/redaction.js';
+import { readWritebackReasonCode } from '../../lib/writebackReasonCode.js';
+import type { WritebackJob } from '../../repositories/contracts.js';
 import { requireMutationApiKey } from '../../plugins/apiKeyAuth.js';
 import { DEAD_LETTER_ERROR_CODE } from './reasonCodes.js';
 
@@ -19,20 +21,6 @@ const deadLetterListQuerySchema = z.object({
 
 function isDeadLetterStatus(status: string): boolean {
   return status === 'retryable_failed' || status === 'dead_failed' || status === 'failed';
-}
-
-function readReasonCode(detail: Record<string, unknown> | null): string | null {
-  if (!detail) {
-    return null;
-  }
-
-  const reasonCandidate = detail.reasonCode ?? detail.code;
-  if (typeof reasonCandidate !== 'string') {
-    return null;
-  }
-
-  const normalized = reasonCandidate.trim().toUpperCase();
-  return normalized.length > 0 ? normalized : null;
 }
 
 function sanitize<T>(payload: T): T {
@@ -55,7 +43,7 @@ function toDeadLetterSummary(job: {
     noteId: job.noteId,
     status: job.status,
     operatorStatus: job.operatorStatus,
-    reasonCode: readReasonCode(job.lastErrorDetail),
+    reasonCode: readWritebackReasonCode(job.lastErrorDetail),
     attempts: job.attempts,
     replayOfJobId: job.replayOfJobId,
     replayedJobId: job.replayedJobId,
@@ -76,8 +64,46 @@ function toDeadLetterAttempt(attempt: {
     fromStatus: attempt.fromStatus,
     toStatus: attempt.toStatus,
     error: attempt.error,
-    reasonCode: readReasonCode(attempt.errorDetail),
+    reasonCode: readWritebackReasonCode(attempt.errorDetail),
     occurredAt: attempt.occurredAt
+  };
+}
+
+function toOperatorJob(job: WritebackJob) {
+  return {
+    jobId: job.jobId,
+    noteId: job.noteId,
+    ehr: job.ehr,
+    status: job.status,
+    attempts: job.attempts,
+    operatorStatus: job.operatorStatus,
+    lastError: job.lastError,
+    reasonCode: readWritebackReasonCode(job.lastErrorDetail),
+    replayOfJobId: job.replayOfJobId,
+    replayedJobId: job.replayedJobId,
+    createdAt: job.createdAt,
+    updatedAt: job.updatedAt
+  };
+}
+
+function toReplayLinkageStatus(
+  deadLetter: WritebackJob,
+  replayJob: WritebackJob | null
+): {
+  originalJobId: string;
+  isReplay: boolean;
+  hasReplay: boolean;
+  replayOfJobId: string | null;
+  replayedJobId: string | null;
+  replayJobStatus: string | null;
+} {
+  return {
+    originalJobId: deadLetter.jobId,
+    isReplay: Boolean(deadLetter.replayOfJobId),
+    hasReplay: Boolean(deadLetter.replayedJobId),
+    replayOfJobId: deadLetter.replayOfJobId,
+    replayedJobId: deadLetter.replayedJobId,
+    replayJobStatus: replayJob?.status ?? null
   };
 }
 
@@ -217,16 +243,42 @@ export const operatorWritebackRoutes: FastifyPluginAsync = async (app) => {
       ok: true,
       data: sanitize({
         deadLetter: toDeadLetterSummary(job),
-        replayLinkage: {
-          replayOfJobId: job.replayOfJobId,
-          replayedJobId: job.replayedJobId,
-          hasReplay: Boolean(job.replayedJobId),
-          isReplay: Boolean(job.replayOfJobId)
-        },
+        replayLinkage: toReplayLinkageStatus(job, null),
         timeline
       })
     });
   });
+
+  app.get(
+    '/operator/writeback/dead-letters/:id/replay-status',
+    { preHandler: requireMutationApiKey },
+    async (req, reply) => {
+      const { jobId } = jobIdParamSchema.parse({ jobId: (req.params as { id?: string }).id });
+      const job = await app.repositories.writeback.getById(jobId);
+
+      if (!job || !isDeadLetterStatus(job.status)) {
+        return sendApiError(
+          req,
+          reply,
+          404,
+          DEAD_LETTER_ERROR_CODE.NOT_FOUND,
+          `dead-letter not found: ${jobId}`
+        );
+      }
+
+      const replayJob = job.replayedJobId
+        ? await app.repositories.writeback.getById(job.replayedJobId)
+        : null;
+
+      return reply.send({
+        ok: true,
+        data: sanitize({
+          deadLetter: toDeadLetterSummary(job),
+          replayLinkage: toReplayLinkageStatus(job, replayJob)
+        })
+      });
+    }
+  );
 
   app.post('/operator/writeback/dead-letters/:id/replay', { preHandler: requireMutationApiKey }, async (req, reply) => {
     const { jobId } = jobIdParamSchema.parse({ jobId: (req.params as { id?: string }).id });
@@ -325,7 +377,7 @@ export const operatorWritebackRoutes: FastifyPluginAsync = async (app) => {
         originalJobId: original.jobId,
         replayJobId: replayCreateResult.replayJob.jobId,
         originalStatus: original.status,
-        reasonCode: readReasonCode(original.lastErrorDetail)
+        reasonCode: readWritebackReasonCode(original.lastErrorDetail)
       }
     });
 
@@ -334,8 +386,8 @@ export const operatorWritebackRoutes: FastifyPluginAsync = async (app) => {
     return reply.send({
       ok: true,
       data: sanitize({
-        originalJob: linkedOriginal,
-        replayJob: replayCreateResult.replayJob
+        originalJob: linkedOriginal ? toOperatorJob(linkedOriginal) : null,
+        replayJob: toOperatorJob(replayCreateResult.replayJob)
       })
     });
   });
@@ -372,7 +424,7 @@ export const operatorWritebackRoutes: FastifyPluginAsync = async (app) => {
 
       return reply.send({
         ok: true,
-        data: sanitize(updated)
+        data: sanitize(updated ? toOperatorJob(updated) : null)
       });
     }
   );
@@ -395,10 +447,10 @@ export const operatorWritebackRoutes: FastifyPluginAsync = async (app) => {
     return reply.send({
       ok: true,
       data: sanitize({
-        job,
+        job: toOperatorJob(job),
         attempts: job.attemptHistory.map((attempt) => ({
           ...attempt,
-          reasonCode: readReasonCode(attempt.errorDetail)
+          reasonCode: readWritebackReasonCode(attempt.errorDetail)
         })),
         timeline
       })

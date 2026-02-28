@@ -5,6 +5,7 @@ import { canTransitionNoteStatus } from '../../lib/noteStateMachine.js';
 import type { WritebackAttempt } from '../../repositories/contracts.js';
 import { sendApiError } from '../../lib/apiError.js';
 import { redactSensitive } from '../../lib/redaction.js';
+import { readWritebackReasonCode } from '../../lib/writebackReasonCode.js';
 import { requireMutationApiKey } from '../../plugins/apiKeyAuth.js';
 import { resolveFailedTransition } from '../../workers/writebackWorker.js';
 
@@ -79,16 +80,6 @@ const JOB_TO_NOTE_STATUS: Record<string, string> = {
 
 function canTransitionWritebackJob(from: string, to: string): boolean {
   return ALLOWED_JOB_TRANSITIONS[from]?.has(to) ?? false;
-}
-
-function readFailureReasonCode(detail?: Record<string, unknown>): string | null {
-  const reasonCandidate = detail?.reasonCode ?? detail?.code;
-  if (typeof reasonCandidate !== 'string') {
-    return null;
-  }
-
-  const normalized = reasonCandidate.trim().toUpperCase();
-  return normalized.length > 0 ? normalized : null;
 }
 
 function sanitizeWritebackResponse<T>(payload: T): T {
@@ -219,7 +210,7 @@ export const writebackRoutes: FastifyPluginAsync = async (app) => {
 
       const failedTransition =
         parsed.status === 'failed'
-          ? resolveFailedTransition(job.attempts, undefined, readFailureReasonCode(parsed.lastErrorDetail))
+          ? resolveFailedTransition(job.attempts, undefined, readWritebackReasonCode(parsed.lastErrorDetail))
           : null;
       const nextJobStatus = failedTransition?.status ?? parsed.status;
       const nextAttempts = failedTransition?.nextAttempts ?? job.attempts;

@@ -12,6 +12,7 @@ import type {
   WritebackStatusSummary
 } from './contracts.js';
 import { classifyWritebackFailureReason } from '../workers/writebackWorker.js';
+import { readWritebackReasonCode } from '../lib/writebackReasonCode.js';
 
 function toAttemptHistory(value: unknown): WritebackAttempt[] {
   if (!Array.isArray(value)) {
@@ -77,7 +78,7 @@ function applyDeadLetterFilters(jobs: WritebackJob[], filters: DeadLetterListFil
       if (!reasonFilter) {
         return true;
       }
-      return toReasonCode(job.lastErrorDetail) === reasonFilter;
+      return readWritebackReasonCode(job.lastErrorDetail) === reasonFilter;
     })
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
     .slice(0, limit);
@@ -99,20 +100,6 @@ function emptySummary(sinceIso: string): WritebackStatusSummary {
       byReasonCode: {}
     }
   };
-}
-
-function toReasonCode(errorDetail: Record<string, unknown> | null): string | null {
-  if (!errorDetail) {
-    return null;
-  }
-
-  const reasonCandidate = errorDetail.reasonCode ?? errorDetail.code;
-  if (typeof reasonCandidate !== 'string') {
-    return null;
-  }
-
-  const normalized = reasonCandidate.trim().toUpperCase();
-  return normalized.length > 0 ? normalized : null;
 }
 
 export function createWritebackRepository(
@@ -392,7 +379,7 @@ export function createWritebackRepository(
 
             summary.recentFailures.total += 1;
 
-            const reasonCode = toReasonCode(attempt.errorDetail);
+            const reasonCode = readWritebackReasonCode(attempt.errorDetail);
             if (reasonCode) {
               summary.recentFailures.byReasonCode[reasonCode] =
                 (summary.recentFailures.byReasonCode[reasonCode] ?? 0) + 1;

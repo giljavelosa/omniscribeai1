@@ -60,6 +60,7 @@ All mutation endpoints require `X-API-Key` when `API_KEY` is configured:
 - `GET /api/v1/operator/writeback/dead-letters`
 - `GET /api/v1/operator/writeback/dead-letters/:id`
 - `GET /api/v1/operator/writeback/dead-letters/:id/history`
+- `GET /api/v1/operator/writeback/dead-letters/:id/replay-status`
 - `POST /api/v1/operator/writeback/dead-letters/:id/replay`
 - `POST /api/v1/operator/writeback/dead-letters/:id/acknowledge`
 - `GET /api/v1/operator/writeback/jobs/:jobId`
@@ -75,6 +76,7 @@ curl -X POST http://localhost:3000/api/v1/note-compose \
 ## Runbooks
 - `LOCAL_RUNBOOK.md`
 - `DEADLETTER_RUNBOOK.md` (Phase 2 / Block 3 operator dead-letter triage + replay)
+- `PHASE2_BLOCK6_OPERATOR_API_CONTRACT.md` (Phase 2 / Block 6 operator API contract)
 
 ## API endpoints
 - `GET /health`
@@ -88,6 +90,7 @@ curl -X POST http://localhost:3000/api/v1/note-compose \
 - `GET /api/v1/operator/writeback/dead-letters`
 - `GET /api/v1/operator/writeback/dead-letters/:id`
 - `GET /api/v1/operator/writeback/dead-letters/:id/history`
+- `GET /api/v1/operator/writeback/dead-letters/:id/replay-status`
 - `POST /api/v1/operator/writeback/dead-letters/:id/replay`
 - `POST /api/v1/operator/writeback/dead-letters/:id/acknowledge`
 - `GET /api/v1/operator/writeback/jobs/:jobId`

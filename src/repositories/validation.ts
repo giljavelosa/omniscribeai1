@@ -11,6 +11,7 @@ function toValidation(row: Record<string, unknown>): ValidationResult {
     sessionId: String(value.session_id),
     decision: value.decision as ValidationResult['decision'],
     unsupportedStatementRate: Number(value.unsupported_statement_rate),
+    reasons: Array.isArray(value.reasons) ? value.reasons.map((item) => String(item)) : [],
     details: value.details as Record<string, unknown>,
     createdAt: String(value.created_at)
   };
@@ -36,10 +37,11 @@ export function createValidationRepository(
             session_id,
             decision,
             unsupported_statement_rate,
+            reasons,
             details
           )
-          VALUES ($1, $2, $3, $4, $5, $6::jsonb)
-          RETURNING result_id, note_id, session_id, decision, unsupported_statement_rate, details, created_at
+          VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb)
+          RETURNING result_id, note_id, session_id, decision, unsupported_statement_rate, reasons, details, created_at
         `,
         [
           result.resultId,
@@ -47,6 +49,7 @@ export function createValidationRepository(
           result.sessionId,
           result.decision,
           result.unsupportedStatementRate,
+          JSON.stringify(result.reasons),
           JSON.stringify(result.details)
         ]
       );
@@ -64,7 +67,7 @@ export function createValidationRepository(
 
       const result = await db.query(
         `
-          SELECT result_id, note_id, session_id, decision, unsupported_statement_rate, details, created_at
+          SELECT result_id, note_id, session_id, decision, unsupported_statement_rate, reasons, details, created_at
           FROM validation_results
           WHERE session_id = $1
           ORDER BY created_at DESC
@@ -90,7 +93,7 @@ export function createValidationRepository(
 
       const result = await db.query(
         `
-          SELECT result_id, note_id, session_id, decision, unsupported_statement_rate, details, created_at
+          SELECT result_id, note_id, session_id, decision, unsupported_statement_rate, reasons, details, created_at
           FROM validation_results
           WHERE note_id = $1
           ORDER BY created_at DESC

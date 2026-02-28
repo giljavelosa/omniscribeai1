@@ -35,6 +35,30 @@ function decideValidation(
   return 'blocked';
 }
 
+function buildReasons(
+  division: 'medical' | 'rehab' | 'bh',
+  unsupportedStatementRate: number,
+  decision: ValidationDecision
+): string[] {
+  if (division === 'bh') {
+    if (unsupportedStatementRate > 0) {
+      return ['bh_requires_zero_unsupported', 'unsupported_statements_detected'];
+    }
+
+    return ['bh_requires_manual_review_even_when_supported'];
+  }
+
+  if (decision === 'approved_for_writeback') {
+    return ['unsupported_rate_at_or_below_auto_approve_threshold'];
+  }
+
+  if (decision === 'needs_review') {
+    return ['unsupported_rate_in_manual_review_band'];
+  }
+
+  return ['unsupported_rate_above_block_threshold'];
+}
+
 export const validationGateRoutes: FastifyPluginAsync = async (app) => {
   app.post('/validation-gate', { preHandler: requireMutationApiKey }, async (req, reply) => {
     const parsed = validateSchema.parse(req.body);
@@ -56,6 +80,7 @@ export const validationGateRoutes: FastifyPluginAsync = async (app) => {
     }
 
     const decision = decideValidation(note.division, parsed.unsupportedStatementRate);
+    const reasons = buildReasons(note.division, parsed.unsupportedStatementRate, decision);
 
     if (!canTransitionNoteStatus(note.status, decision)) {
       return sendApiError(
@@ -73,6 +98,7 @@ export const validationGateRoutes: FastifyPluginAsync = async (app) => {
       sessionId: note.sessionId,
       decision,
       unsupportedStatementRate: parsed.unsupportedStatementRate,
+      reasons,
       details: {
         division: note.division,
         policy: note.division === 'bh' ? 'bh_strict_default' : 'default_v1'

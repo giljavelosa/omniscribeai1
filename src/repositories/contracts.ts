@@ -50,8 +50,18 @@ export type ValidationResult = {
   sessionId: string;
   decision: ValidationDecision;
   unsupportedStatementRate: number;
+  reasons: string[];
   details: Record<string, unknown>;
   createdAt: string;
+};
+
+export type WritebackAttempt = {
+  attempt: number;
+  fromStatus: string;
+  toStatus: string;
+  error: string;
+  errorDetail: Record<string, unknown> | null;
+  occurredAt: string;
 };
 
 export type WritebackJob = {
@@ -62,6 +72,8 @@ export type WritebackJob = {
   status: string;
   attempts: number;
   lastError: string | null;
+  lastErrorDetail: Record<string, unknown> | null;
+  attemptHistory: WritebackAttempt[];
   createdAt: string;
   updatedAt: string;
 };
@@ -105,11 +117,25 @@ export interface ValidationRepository {
   getLatestByNote(noteId: string): Promise<ValidationResult | null>;
 }
 
+export type WritebackListFilters = {
+  state?: string;
+  noteId?: string;
+  limit?: number;
+};
+
+export type WritebackStatusUpdate = {
+  lastError?: string | null;
+  lastErrorDetail?: Record<string, unknown> | null;
+  attempts?: number;
+  attemptHistory?: WritebackAttempt[];
+};
+
 export interface WritebackRepository {
   insert(job: Omit<WritebackJob, 'createdAt' | 'updatedAt'>): Promise<WritebackJob>;
   getById(jobId: string): Promise<WritebackJob | null>;
   getByIdempotencyKey(idempotencyKey: string): Promise<WritebackJob | null>;
-  updateStatus(jobId: string, status: string, lastError?: string, attempts?: number): Promise<void>;
+  list(filters: WritebackListFilters): Promise<WritebackJob[]>;
+  updateStatus(jobId: string, status: string, update?: WritebackStatusUpdate): Promise<void>;
 }
 
 export interface AuditRepository {

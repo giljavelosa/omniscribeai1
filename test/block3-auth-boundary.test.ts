@@ -141,4 +141,67 @@ describe('Block3 auth boundary for mutation endpoints', () => {
 
     await app.close();
   });
+
+  it('rejects unauthorized read access to dead-letter list', async () => {
+    const app = buildApp();
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/v1/operator/writeback/dead-letters'
+    });
+
+    expect(res.statusCode).toBe(401);
+    expect(res.json()).toMatchObject({
+      ok: false,
+      error: {
+        code: 'UNAUTHORIZED',
+        message: expect.any(String)
+      },
+      correlationId: expect.any(String)
+    });
+
+    await app.close();
+  });
+
+  it('rejects unauthorized read access to dead-letter detail', async () => {
+    const app = buildApp();
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/v1/operator/writeback/dead-letters/non-existent-job'
+    });
+
+    expect(res.statusCode).toBe(401);
+    expect(res.json()).toMatchObject({
+      ok: false,
+      error: {
+        code: 'UNAUTHORIZED',
+        message: expect.any(String)
+      },
+      correlationId: expect.any(String)
+    });
+
+    await app.close();
+  });
+
+  it('rejects unauthorized replay of dead-letters', async () => {
+    const app = buildApp();
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/operator/writeback/dead-letters/non-existent-job/replay'
+    });
+
+    expect(res.statusCode).toBe(401);
+    expect(res.json()).toMatchObject({
+      ok: false,
+      error: {
+        code: 'UNAUTHORIZED',
+        message: expect.any(String)
+      },
+      correlationId: expect.any(String)
+    });
+
+    await app.close();
+  });
 });

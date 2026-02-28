@@ -1,52 +1,83 @@
-# Phase 1 Block 6 — Final Readiness Checklist (Local Pilot)
+# Phase 2 Block 6 — Final Operator Readiness Checklist
 
-Use this checklist as a strict **go / no-go** gate before running a local pilot.
+Use this checklist as the final **go / no-go** gate for Phase 2 operations.
+
+---
 
 ## A) Preconditions
 
 - [ ] Node.js is v22+ (`node -v`)
-- [ ] Docker is installed and running (for DB/Redis mode)
-- [ ] Repo is clean enough for pilot (`git status` reviewed)
 - [ ] Dependencies installed (`npm install`)
 - [ ] `.env` exists (`cp .env.example .env` if missing)
+- [ ] `API_KEY` set for operator/protected endpoint access
+- [ ] If running persistent mode, Docker is running and infra is healthy (`npm run infra:up`)
+
+---
 
 ## B) Build + Quality Gates
 
-- [ ] TypeScript build passes: `npm run build`
-- [ ] Test suite passes: `npm run test`
-- [ ] Smoke E2E passes against running API: `npm run smoke:e2e`
+- [ ] Build passes (`npm run build`)
+- [ ] Tests pass (`npm run test`)
+- [ ] Smoke flow passes (`npm run smoke:e2e`)
 
-## C) Runtime Mode Decision
+---
 
-Choose **one** mode for pilot execution.
+## C) Phase 2 Final Operator Flow (required)
 
-### Option 1 — In-memory fallback mode (no Postgres/Redis)
+Run in this exact order for daily operations and incident handling:
 
-- [ ] `DATABASE_URL` is unset/empty for this run
-- [ ] `REDIS_URL` is unset/empty for this run
-- [ ] API starts successfully
-- [ ] `/health` responds OK
+1. **Baseline health**: `GET /health`
+2. **Pipeline summary**: `GET /api/v1/operator/writeback/status/summary?recentHours=24`
+3. **Dead-letter list**: `GET /api/v1/operator/writeback/dead-letters?limit=50`
+4. For each target job:
+   - `GET /api/v1/operator/writeback/dead-letters/:id`
+   - `GET /api/v1/operator/writeback/dead-letters/:id/history`
+5. **Decision point**:
+   - acknowledge known issue: `POST /api/v1/operator/writeback/dead-letters/:id/acknowledge`
+   - replay after fix validated: `POST /api/v1/operator/writeback/dead-letters/:id/replay`
+6. **Replay verification**:
+   - `GET /api/v1/operator/writeback/jobs/:jobId`
+   - `GET /api/v1/operator/writeback/status/summary?recentHours=1`
 
-### Option 2 — DB + Redis mode (persistent + queue)
+Checklist gates:
+- [ ] Any dead-letter job was triaged (detail + history checked)
+- [ ] Every action was either acknowledged with reason or replayed with verification
+- [ ] No unauthorized or validation errors in normal operator path
 
-- [ ] Infra containers healthy: Postgres + Redis
-- [ ] Migrations completed (`npm run migrate`)
-- [ ] API starts successfully
-- [ ] `/health` responds OK
+---
 
-## D) Functional Pilot Flow (Required)
+## D) Endpoint Map (Phase 2 final)
 
-- [ ] `transcript-ingest` returns `ok: true`
-- [ ] `note-compose` returns `data.noteId` and `status: draft_created`
-- [ ] `validation-gate` returns `approved_for_writeback`
-- [ ] `writeback/jobs` returns job with `status: queued`
-- [ ] `writeback/jobs/:jobId` returns same queued job record
+### Core flow endpoints
+
+- `GET /health`
+- `POST /api/v1/transcript-ingest`
+- `POST /api/v1/fact-ledger/extract`
+- `POST /api/v1/note-compose`
+- `POST /api/v1/validation-gate`
+- `POST /api/v1/writeback/jobs`
+- `POST /api/v1/writeback/jobs/:jobId/transition`
+
+### Operator endpoints
+
+- `GET /api/v1/operator/writeback/status/summary`
+- `GET /api/v1/operator/writeback/dead-letters`
+- `GET /api/v1/operator/writeback/dead-letters/:id`
+- `GET /api/v1/operator/writeback/dead-letters/:id/history`
+- `POST /api/v1/operator/writeback/dead-letters/:id/acknowledge`
+- `POST /api/v1/operator/writeback/dead-letters/:id/replay`
+- `GET /api/v1/operator/writeback/jobs/:jobId`
+
+---
 
 ## E) Security / Access Baseline
 
-- [ ] If `API_KEY` is configured, all mutation calls include `X-API-Key`
-- [ ] No production secrets are committed in repo files
-- [ ] Logs show no fatal startup or connection errors
+- [ ] Protected calls include `X-API-Key` when `API_KEY` is configured
+- [ ] No secrets committed in repository
+- [ ] Logs show no fatal startup/connection failures
+- [ ] Operator actions are tied to ticket/incident IDs
+
+---
 
 ## F) Go / No-Go Decision
 
@@ -56,23 +87,3 @@ Choose **one** mode for pilot execution.
 - Operator:
 - Date/Time:
 - Notes / blockers:
-
-## One-command run sequences
-
-### 1) In-memory fallback run (single command)
-
-```bash
-(env -u DATABASE_URL -u REDIS_URL npm run build && env -u DATABASE_URL -u REDIS_URL npm run test && env -u DATABASE_URL -u REDIS_URL npm run dev)
-```
-
-### 2) DB + Redis run (single command)
-
-```bash
-(npm run infra:up && npm run migrate && npm run build && npm run test && npm run dev)
-```
-
-> In another terminal, execute smoke test after API is up:
->
-> ```bash
-> npm run smoke:e2e
-> ```

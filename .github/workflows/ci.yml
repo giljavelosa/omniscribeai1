@@ -27,8 +27,8 @@ jobs:
       - name: Install deps
         run: npm ci
 
-      - name: Lint gate (temporary TypeScript compile check)
-        run: npm run build
+      - name: Lint
+        run: npm run lint
 
   test:
     name: test

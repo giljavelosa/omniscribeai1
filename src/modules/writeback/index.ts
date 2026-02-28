@@ -8,10 +8,18 @@ import { redactSensitive } from '../../lib/redaction.js';
 import { requireMutationApiKey } from '../../plugins/apiKeyAuth.js';
 import { resolveFailedTransition } from '../../workers/writebackWorker.js';
 
+const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9:_-]{8,128}$/;
+
 const writebackSchema = z.object({
-  noteId: z.string(),
+  noteId: z.string().uuid(),
   ehr: z.string(),
-  idempotencyKey: z.string().min(1)
+  idempotencyKey: z
+    .string()
+    .trim()
+    .regex(
+      IDEMPOTENCY_KEY_PATTERN,
+      'idempotencyKey must be 8-128 chars of letters, numbers, colon, underscore, or hyphen'
+    )
 });
 
 const transitionSchema = z
@@ -37,6 +45,11 @@ const transitionSchema = z
       });
     }
   });
+
+
+const jobIdParamSchema = z.object({
+  jobId: z.string().uuid()
+});
 
 const listSchema = z.object({
   state: z
@@ -152,6 +165,8 @@ export const writebackRoutes: FastifyPluginAsync = async (app) => {
       noteId: note.noteId,
       ehr: 'nextgen',
       idempotencyKey: parsed.idempotencyKey,
+      replayOfJobId: null,
+      replayedJobId: null,
       status: 'queued',
       attempts: 0,
       lastError: null,
@@ -183,7 +198,7 @@ export const writebackRoutes: FastifyPluginAsync = async (app) => {
     '/writeback/jobs/:jobId/transition',
     { preHandler: requireMutationApiKey },
     async (req, reply) => {
-      const { jobId } = req.params as { jobId: string };
+      const { jobId } = jobIdParamSchema.parse(req.params);
       const parsed = transitionSchema.parse(req.body);
 
       const job = await app.repositories.writeback.getById(jobId);
@@ -286,7 +301,7 @@ export const writebackRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.get('/writeback/jobs/:jobId', { preHandler: requireMutationApiKey }, async (req, reply) => {
-    const { jobId } = req.params as { jobId: string };
+    const { jobId } = jobIdParamSchema.parse(req.params);
     const job = await app.repositories.writeback.getById(jobId);
 
     if (!job) {

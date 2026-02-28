@@ -56,6 +56,8 @@ All mutation endpoints require `X-API-Key` when `API_KEY` is configured:
 - `POST /api/v1/validation-gate`
 - `POST /api/v1/writeback/jobs`
 - `POST /api/v1/writeback/jobs/:jobId/transition`
+- `GET /api/v1/operator/writeback/status/summary`
+- `GET /api/v1/operator/writeback/jobs/:jobId`
 
 Sample:
 ```bash
@@ -65,6 +67,10 @@ curl -X POST http://localhost:3000/api/v1/note-compose \
   -d '{"sessionId":"sess-1","division":"medical","noteFamily":"progress_note","useExistingFacts":true}'
 ```
 
+## Runbooks
+- `LOCAL_RUNBOOK.md`
+- `DEADLETTER_RUNBOOK.md` (Phase 2 / Block 3 operator dead-letter triage + replay)
+
 ## API endpoints
 - `GET /health`
 - `POST /api/v1/transcript-ingest`
@@ -73,3 +79,5 @@ curl -X POST http://localhost:3000/api/v1/note-compose \
 - `POST /api/v1/validation-gate`
 - `POST /api/v1/writeback/jobs`
 - `POST /api/v1/writeback/jobs/:jobId/transition`
+- `GET /api/v1/operator/writeback/status/summary`
+- `GET /api/v1/operator/writeback/jobs/:jobId`

@@ -20,7 +20,7 @@ async function injectJson(
 ) {
   const current = await getApp();
   const headers =
-    method === 'POST' && withAuth
+    withAuth
       ? {
           'x-api-key': TEST_API_KEY
         }

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { canTransitionNoteStatus } from '../../lib/noteStateMachine.js';
+import type { WritebackAttempt } from '../../repositories/contracts.js';
 import { sendApiError } from '../../lib/apiError.js';
 import { requireMutationApiKey } from '../../plugins/apiKeyAuth.js';
 import { resolveFailedTransition } from '../../workers/writebackWorker.js';
@@ -15,7 +16,8 @@ const writebackSchema = z.object({
 const transitionSchema = z
   .object({
     status: z.enum(['queued', 'in_progress', 'succeeded', 'failed']),
-    lastError: z.string().trim().min(1).optional()
+    lastError: z.string().trim().min(1).optional(),
+    lastErrorDetail: z.record(z.string(), z.unknown()).optional()
   })
   .superRefine((payload, ctx) => {
     if (payload.status === 'failed' && !payload.lastError) {
@@ -26,14 +28,22 @@ const transitionSchema = z
       });
     }
 
-    if (payload.status !== 'failed' && payload.lastError) {
+    if (payload.status !== 'failed' && (payload.lastError || payload.lastErrorDetail)) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: 'lastError is only allowed when status is failed',
-        path: ['lastError']
+        message: 'lastError/lastErrorDetail are only allowed when status is failed',
+        path: ['lastErrorDetail']
       });
     }
   });
+
+const listSchema = z.object({
+  state: z
+    .enum(['queued', 'in_progress', 'retryable_failed', 'dead_failed', 'succeeded', 'failed'])
+    .optional(),
+  noteId: z.string().min(1).optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(50)
+});
 
 const ALLOWED_JOB_TRANSITIONS: Record<string, Set<string>> = {
   queued: new Set(['in_progress', 'failed']),
@@ -129,7 +139,9 @@ export const writebackRoutes: FastifyPluginAsync = async (app) => {
       idempotencyKey: parsed.idempotencyKey,
       status: 'queued',
       attempts: 0,
-      lastError: null
+      lastError: null,
+      lastErrorDetail: null,
+      attemptHistory: []
     });
 
     await app.repositories.notes.updateStatus(note.noteId, 'writeback_queued');
@@ -166,6 +178,20 @@ export const writebackRoutes: FastifyPluginAsync = async (app) => {
         parsed.status === 'failed' ? resolveFailedTransition(job.attempts) : null;
       const nextJobStatus = failedTransition?.status ?? parsed.status;
       const nextAttempts = failedTransition?.nextAttempts ?? job.attempts;
+      const nextAttemptHistory: WritebackAttempt[] =
+        parsed.status === 'failed' && parsed.lastError
+          ? [
+              ...job.attemptHistory,
+              {
+                attempt: nextAttempts,
+                fromStatus: job.status,
+                toStatus: nextJobStatus,
+                error: parsed.lastError,
+                errorDetail: parsed.lastErrorDetail ?? null,
+                occurredAt: new Date().toISOString()
+              }
+            ]
+          : job.attemptHistory;
 
       const note = await app.repositories.notes.getById(job.noteId);
       if (!note) {
@@ -189,15 +215,48 @@ export const writebackRoutes: FastifyPluginAsync = async (app) => {
         );
       }
 
-      await app.repositories.writeback.updateStatus(job.jobId, nextJobStatus, parsed.lastError, nextAttempts);
+      await app.repositories.writeback.updateStatus(job.jobId, nextJobStatus, {
+        attempts: nextAttempts,
+        lastError: parsed.status === 'failed' ? parsed.lastError ?? null : null,
+        lastErrorDetail: parsed.status === 'failed' ? parsed.lastErrorDetail ?? null : null,
+        attemptHistory: nextAttemptHistory
+      });
       await app.repositories.notes.updateStatus(note.noteId, nextNoteStatus);
+      await app.repositories.audit.insert({
+        eventId: randomUUID(),
+        sessionId: note.sessionId,
+        noteId: note.noteId,
+        eventType: 'writeback_transition_applied',
+        actor: 'system',
+        payload: {
+          jobId: job.jobId,
+          fromStatus: job.status,
+          requestedStatus: parsed.status,
+          resolvedStatus: nextJobStatus,
+          attemptsBefore: job.attempts,
+          attemptsAfter: nextAttempts,
+          noteStatusBefore: note.status,
+          noteStatusAfter: nextNoteStatus
+        }
+      });
 
       const updated = await app.repositories.writeback.getById(job.jobId);
       return reply.send({ ok: true, data: updated });
     }
   );
 
-  app.get('/writeback/jobs/:jobId', async (req, reply) => {
+  app.get('/writeback/jobs', { preHandler: requireMutationApiKey }, async (req, reply) => {
+    const parsed = listSchema.parse(req.query ?? {});
+    const jobs = await app.repositories.writeback.list({
+      state: parsed.state,
+      noteId: parsed.noteId,
+      limit: parsed.limit
+    });
+
+    return reply.send({ ok: true, data: jobs });
+  });
+
+  app.get('/writeback/jobs/:jobId', { preHandler: requireMutationApiKey }, async (req, reply) => {
     const { jobId } = req.params as { jobId: string };
     const job = await app.repositories.writeback.getById(jobId);
 

@@ -155,6 +155,24 @@ export type WritebackStatusUpdate = {
   attemptHistory?: WritebackAttempt[];
 };
 
+export type DeadLetterReplayInsert = {
+  jobId: string;
+  noteId: string;
+  ehr: WritebackJob['ehr'];
+  idempotencyKey: string;
+  operatorStatus: WritebackJob['operatorStatus'];
+  status: string;
+  attempts: number;
+  lastError: string | null;
+  lastErrorDetail: Record<string, unknown> | null;
+  attemptHistory: WritebackAttempt[];
+};
+
+export type DeadLetterReplayCreateResult =
+  | { outcome: 'created'; originalJobId: string; replayJob: WritebackJob }
+  | { outcome: 'already_replayed'; originalJobId: string; existingReplayJobId: string | null }
+  | { outcome: 'original_not_found'; originalJobId: string };
+
 export interface WritebackRepository {
   insert(job: Omit<WritebackJob, 'createdAt' | 'updatedAt'>): Promise<WritebackJob>;
   getById(jobId: string): Promise<WritebackJob | null>;
@@ -165,6 +183,10 @@ export interface WritebackRepository {
   updateOperatorStatus(jobId: string, operatorStatus: WritebackJob['operatorStatus']): Promise<void>;
   updateStatus(jobId: string, status: string, update?: WritebackStatusUpdate): Promise<void>;
   linkReplay(originalJobId: string, replayJobId: string): Promise<void>;
+  createDeadLetterReplay(
+    originalJobId: string,
+    replayJob: DeadLetterReplayInsert
+  ): Promise<DeadLetterReplayCreateResult>;
 }
 
 export interface AuditRepository {

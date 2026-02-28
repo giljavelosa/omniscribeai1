@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.js';
+import { DEAD_LETTER_ERROR_CODE } from '../src/modules/operator-writeback/reasonCodes.js';
 
 const TEST_API_KEY = 'phase2-block3-dead-letters-key';
 
@@ -203,7 +204,7 @@ describe('Phase2 Block3 operator dead-letter APIs', () => {
     expect(replay.json()).toMatchObject({
       ok: false,
       error: {
-        code: 'DEAD_LETTER_REPLAY_REQUIRES_DEAD_FAILED'
+        code: DEAD_LETTER_ERROR_CODE.REPLAY_REQUIRES_DEAD_FAILED
       },
       correlationId: expect.any(String)
     });
@@ -264,16 +265,16 @@ describe('Phase2 Block3 operator dead-letter APIs', () => {
 
     expect(detail.statusCode).toBe(200);
     expect(detail.json().data).toMatchObject({
-      reasonCode: 'VALIDATION_ERROR',
-      job: {
+      deadLetter: {
         jobId: originalJobId,
         status: 'dead_failed',
-        lastErrorDetail: {
-          reasonCode: 'VALIDATION_ERROR',
-          patientPhone: '[REDACTED]'
-        }
-      }
+        reasonCode: 'VALIDATION_ERROR'
+      },
+      lastError: 'payload rejected'
     });
+    expect(detail.json().data.deadLetter.idempotencyKey).toBeUndefined();
+    expect(detail.json().data.attempts[0].reasonCode).toBe('VALIDATION_ERROR');
+    expect(detail.json().data.attempts[0].errorDetail).toBeUndefined();
 
     const replay = await app.inject({
       method: 'POST',
@@ -331,9 +332,78 @@ describe('Phase2 Block3 operator dead-letter APIs', () => {
     expect(replayAgain.json()).toMatchObject({
       ok: false,
       error: {
-        code: 'WRITEBACK_REPLAY_ALREADY_EXISTS'
+        code: DEAD_LETTER_ERROR_CODE.REPLAY_ALREADY_EXISTS
       }
     });
+
+    await app.close();
+  });
+
+
+  it('race-proofs replay so only one replay job is created under concurrent requests', async () => {
+    const app = buildApp();
+    const headers = { 'x-api-key': TEST_API_KEY };
+
+    const compose = await app.inject({
+      method: 'POST',
+      url: '/api/v1/note-compose',
+      headers,
+      payload: {
+        sessionId: 'sess-phase2-block5-replay-race',
+        division: 'medical',
+        noteFamily: 'progress_note'
+      }
+    });
+    const noteId = compose.json().data.noteId as string;
+
+    await app.inject({
+      method: 'POST',
+      url: '/api/v1/validation-gate',
+      headers,
+      payload: { noteId, unsupportedStatementRate: 0 }
+    });
+
+    const create = await app.inject({
+      method: 'POST',
+      url: '/api/v1/writeback/jobs',
+      headers,
+      payload: { noteId, ehr: 'nextgen', idempotencyKey: 'idem-phase2-block5-replay-race' }
+    });
+    const originalJobId = create.json().data.jobId as string;
+
+    await app.inject({
+      method: 'POST',
+      url: `/api/v1/writeback/jobs/${originalJobId}/transition`,
+      headers,
+      payload: {
+        status: 'failed',
+        lastError: 'payload rejected',
+        lastErrorDetail: { reasonCode: 'VALIDATION_ERROR' }
+      }
+    });
+
+    const [a, b] = await Promise.all([
+      app.inject({
+        method: 'POST',
+        url: `/api/v1/operator/writeback/dead-letters/${originalJobId}/replay`,
+        headers
+      }),
+      app.inject({
+        method: 'POST',
+        url: `/api/v1/operator/writeback/dead-letters/${originalJobId}/replay`,
+        headers
+      })
+    ]);
+
+    const statuses = [a.statusCode, b.statusCode].sort((x, y) => x - y);
+    expect(statuses).toEqual([200, 409]);
+
+    const jobs = await app.repositories.writeback.list({ noteId, limit: 20 });
+    const replayJobs = jobs.filter((job) => job.replayOfJobId === originalJobId);
+    expect(replayJobs).toHaveLength(1);
+
+    const persistedOriginal = await app.repositories.writeback.getById(originalJobId);
+    expect(persistedOriginal?.replayedJobId).toBe(replayJobs[0].jobId);
 
     await app.close();
   });
@@ -458,7 +528,7 @@ describe('Phase2 Block3 operator dead-letter APIs', () => {
     expect(secondAck.json()).toMatchObject({
       ok: false,
       error: {
-        code: 'DEAD_LETTER_ALREADY_ACKNOWLEDGED'
+        code: DEAD_LETTER_ERROR_CODE.ALREADY_ACKNOWLEDGED
       },
       correlationId: expect.any(String)
     });

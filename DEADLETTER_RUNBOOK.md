@@ -55,7 +55,7 @@ curl -s "$BASE_URL/api/v1/operator/writeback/dead-letters?limit=50" \
 
 Use this list to pick target `jobId`/`noteId` and reason codes.
 
-### Step C — Inspect dead-letter detail + timeline
+### Step C — Inspect dead-letter detail
 
 ```bash
 JOB_ID=<dead_letter_job_id>
@@ -65,11 +65,23 @@ curl -s "$BASE_URL/api/v1/operator/writeback/dead-letters/$JOB_ID" \
 ```
 
 Review:
-- `data.job.status` (`dead_failed`, `retryable_failed`, or `failed`)
-- `data.reasonCode`
+- `data.deadLetter.status` (`dead_failed`, `retryable_failed`, or `failed`)
+- `data.deadLetter.reasonCode`
 - `data.attempts[*].reasonCode`
-- `data.job.lastError` / `data.job.lastErrorDetail`
-- `data.timeline`
+- `data.lastError`
+
+### Step D — Inspect dead-letter timeline/audit history
+
+```bash
+JOB_ID=<dead_letter_job_id>
+
+curl -s "$BASE_URL/api/v1/operator/writeback/dead-letters/$JOB_ID/history" \
+  -H "X-API-Key: $API_KEY"
+```
+
+Review:
+- `data.replayLinkage` (`replayOfJobId`, `replayedJobId`, `hasReplay`, `isReplay`)
+- `data.timeline` (writeback events for original/replay linkage)
 
 ---
 
@@ -169,6 +181,7 @@ If replay causes adverse effects:
 1. **Stop further replays immediately** (operational freeze).
 2. Identify replayed jobs and inspect linked details:
    - `GET /api/v1/operator/writeback/dead-letters/:id`
+   - `GET /api/v1/operator/writeback/dead-letters/:id/history`
    - `GET /api/v1/operator/writeback/jobs/:jobId`
 3. Coordinate with downstream EHR owners for external remediation (duplicates/retractions).
 4. Revert upstream/root-cause fix if needed before resuming replay.
@@ -187,6 +200,9 @@ curl -s "$BASE_URL/api/v1/operator/writeback/dead-letters?limit=50" -H "X-API-Ke
 
 # dead-letter detail
 curl -s "$BASE_URL/api/v1/operator/writeback/dead-letters/$JOB_ID" -H "X-API-Key: $API_KEY"
+
+# dead-letter timeline/audit history
+curl -s "$BASE_URL/api/v1/operator/writeback/dead-letters/$JOB_ID/history" -H "X-API-Key: $API_KEY"
 
 # acknowledge dead-letter
 curl -s -X POST "$BASE_URL/api/v1/operator/writeback/dead-letters/$JOB_ID/acknowledge" \

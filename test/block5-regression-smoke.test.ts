@@ -280,7 +280,9 @@ describe('Block5 regressions: compose->validate->writeback and smoke contract', 
     });
     expect(detail.statusCode).toBe(200);
     expect(detail.json().data).toMatchObject({
-      reasonCode: 'VALIDATION_ERROR',
+      deadLetter: {
+        reasonCode: 'VALIDATION_ERROR'
+      },
       attempts: [
         {
           attempt: 1,
@@ -349,7 +351,7 @@ describe('Block5 regressions: compose->validate->writeback and smoke contract', 
 
     const unauthorized = await current.inject({
       method: 'GET',
-      url: '/api/v1/operator/writeback/dead-letters/00000000-0000-4000-8000-000000000111'
+      url: '/api/v1/operator/writeback/dead-letters/00000000-0000-4000-8000-000000000111/history'
     });
 
     expect(unauthorized.statusCode).toBe(401);
@@ -421,7 +423,7 @@ describe('Block5 regressions: compose->validate->writeback and smoke contract', 
 
     const detail = await current.inject({
       method: 'GET',
-      url: `/api/v1/operator/writeback/dead-letters/${originalJobId}`,
+      url: `/api/v1/operator/writeback/dead-letters/${originalJobId}/history`,
       headers
     });
 
@@ -429,25 +431,23 @@ describe('Block5 regressions: compose->validate->writeback and smoke contract', 
     expect(detail.json()).toMatchObject({
       ok: true,
       data: {
-        reasonCode: 'VALIDATION_ERROR',
-        job: {
+        deadLetter: {
           jobId: originalJobId,
           noteId,
           status: 'dead_failed',
+          reasonCode: 'VALIDATION_ERROR',
           replayedJobId: expect.any(String)
         },
-        attempts: [
-          {
-            attempt: 1,
-            reasonCode: 'VALIDATION_ERROR'
-          }
-        ],
+        replayLinkage: {
+          hasReplay: true,
+          isReplay: false
+        },
         timeline: expect.any(Array)
       }
     });
 
     const body = detail.json().data;
-    expect(body.attempts[0].errorDetail.patientName).toBe('[REDACTED]');
+    expect(body.deadLetter.idempotencyKey).toBeUndefined();
     expect(body.timeline.length).toBeGreaterThan(0);
     expect(body.timeline.some((event: { eventType: string }) => event.eventType === 'writeback_job_queued')).toBe(
       true

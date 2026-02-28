@@ -2,6 +2,8 @@ import type { DbExecutor } from './db.js';
 import { mapTimestamps } from './db.js';
 import type { MemoryStore } from './memoryStore.js';
 import type {
+  DeadLetterReplayCreateResult,
+  DeadLetterReplayInsert,
   DeadLetterListFilters,
   WritebackAttempt,
   WritebackJob,
@@ -120,6 +122,22 @@ export function createWritebackRepository(
   return {
     async insert(job) {
       if (!db) {
+        const replayOfJobId = job.replayOfJobId?.trim();
+        if (replayOfJobId) {
+          const existingReplay = Array.from(store.writeback.values()).find(
+            (existing) => existing.replayOfJobId === replayOfJobId
+          );
+          if (existingReplay) {
+            const error = new Error(`duplicate replay_of_job_id for ${replayOfJobId}`) as Error & {
+              code?: string;
+              constraint?: string;
+            };
+            error.code = '23505';
+            error.constraint = 'uniq_writeback_jobs_replay_of_job_id';
+            throw error;
+          }
+        }
+
         const now = new Date().toISOString();
         const created: WritebackJob = { ...job, createdAt: now, updatedAt: now };
         store.writeback.set(job.jobId, created);
@@ -142,7 +160,7 @@ export function createWritebackRepository(
             last_error_detail,
             attempt_history
           )
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11::jsonb)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12::jsonb)
           RETURNING
             job_id,
             note_id,
@@ -526,6 +544,163 @@ export function createWritebackRepository(
           JSON.stringify(update?.attemptHistory ?? null)
         ]
       );
+    },
+
+    async createDeadLetterReplay(originalJobId: string, replayJob: DeadLetterReplayInsert) {
+      if (!db) {
+        const original = store.writeback.get(originalJobId);
+        if (!original) {
+          return {
+            outcome: 'original_not_found',
+            originalJobId
+          } satisfies DeadLetterReplayCreateResult;
+        }
+
+        if (original.replayedJobId) {
+          return {
+            outcome: 'already_replayed',
+            originalJobId,
+            existingReplayJobId: original.replayedJobId
+          } satisfies DeadLetterReplayCreateResult;
+        }
+
+        const now = new Date().toISOString();
+        const createdReplay: WritebackJob = {
+          ...replayJob,
+          replayOfJobId: originalJobId,
+          replayedJobId: null,
+          createdAt: now,
+          updatedAt: now
+        };
+
+        store.writeback.set(replayJob.jobId, createdReplay);
+        store.writeback.set(originalJobId, {
+          ...original,
+          replayedJobId: replayJob.jobId,
+          updatedAt: now
+        });
+
+        return {
+          outcome: 'created',
+          originalJobId,
+          replayJob: createdReplay
+        } satisfies DeadLetterReplayCreateResult;
+      }
+
+      const result = await db.query(
+        `
+          WITH original AS (
+            SELECT job_id, replayed_job_id
+            FROM writeback_jobs
+            WHERE job_id = $1
+          ),
+          claim AS (
+            UPDATE writeback_jobs
+            SET replayed_job_id = $2,
+                updated_at = NOW()
+            WHERE job_id = $1
+              AND replayed_job_id IS NULL
+            RETURNING job_id
+          ),
+          inserted AS (
+            INSERT INTO writeback_jobs(
+              job_id,
+              note_id,
+              ehr,
+              idempotency_key,
+              replay_of_job_id,
+              replayed_job_id,
+              operator_status,
+              status,
+              attempts,
+              last_error,
+              last_error_detail,
+              attempt_history
+            )
+            SELECT
+              $2,
+              $3,
+              $4,
+              $5,
+              $1,
+              NULL,
+              $6,
+              $7,
+              $8,
+              $9,
+              $10::jsonb,
+              $11::jsonb
+            FROM claim
+            RETURNING
+              job_id,
+              note_id,
+              ehr,
+              idempotency_key,
+              replay_of_job_id,
+              replayed_job_id,
+              operator_status,
+              status,
+              attempts,
+              last_error,
+              last_error_detail,
+              attempt_history,
+              created_at,
+              updated_at
+          )
+          SELECT
+            (SELECT COUNT(*)::int FROM original) AS original_count,
+            (SELECT replayed_job_id FROM original LIMIT 1) AS existing_replayed_job_id,
+            (SELECT COUNT(*)::int FROM claim) AS claim_count,
+            (SELECT row_to_json(inserted) FROM inserted LIMIT 1) AS replay_job
+        `,
+        [
+          originalJobId,
+          replayJob.jobId,
+          replayJob.noteId,
+          replayJob.ehr,
+          replayJob.idempotencyKey,
+          replayJob.operatorStatus,
+          replayJob.status,
+          replayJob.attempts,
+          replayJob.lastError,
+          JSON.stringify(replayJob.lastErrorDetail),
+          JSON.stringify(replayJob.attemptHistory)
+        ]
+      );
+
+      const row = result.rows[0] as Record<string, unknown>;
+      const originalCount = Number(row.original_count);
+      const claimCount = Number(row.claim_count);
+      const existingReplayJobId =
+        typeof row.existing_replayed_job_id === 'string' ? row.existing_replayed_job_id : null;
+
+      if (originalCount === 0) {
+        return {
+          outcome: 'original_not_found',
+          originalJobId
+        } satisfies DeadLetterReplayCreateResult;
+      }
+
+      if (claimCount === 0) {
+        return {
+          outcome: 'already_replayed',
+          originalJobId,
+          existingReplayJobId
+        } satisfies DeadLetterReplayCreateResult;
+      }
+
+      const replayRow = row.replay_job as Record<string, unknown> | null;
+      if (!replayRow) {
+        throw new Error(
+          `writeback replay insert failed after replay link claim: originalJobId=${originalJobId}, replayJobId=${replayJob.jobId}`
+        );
+      }
+
+      return {
+        outcome: 'created',
+        originalJobId,
+        replayJob: toWritebackJob(replayRow)
+      } satisfies DeadLetterReplayCreateResult;
     },
 
     async linkReplay(originalJobId, replayJobId) {

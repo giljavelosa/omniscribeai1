@@ -184,6 +184,27 @@ describe('Block3 auth boundary for mutation endpoints', () => {
     await app.close();
   });
 
+  it('rejects unauthorized read access to dead-letter history', async () => {
+    const app = buildApp();
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/v1/operator/writeback/dead-letters/non-existent-job/history'
+    });
+
+    expect(res.statusCode).toBe(401);
+    expect(res.json()).toMatchObject({
+      ok: false,
+      error: {
+        code: 'UNAUTHORIZED',
+        message: expect.any(String)
+      },
+      correlationId: expect.any(String)
+    });
+
+    await app.close();
+  });
+
   it('rejects unauthorized replay of dead-letters', async () => {
     const app = buildApp();
 

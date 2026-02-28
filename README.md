@@ -57,6 +57,11 @@ All mutation endpoints require `X-API-Key` when `API_KEY` is configured:
 - `POST /api/v1/writeback/jobs`
 - `POST /api/v1/writeback/jobs/:jobId/transition`
 - `GET /api/v1/operator/writeback/status/summary`
+- `GET /api/v1/operator/writeback/dead-letters`
+- `GET /api/v1/operator/writeback/dead-letters/:id`
+- `GET /api/v1/operator/writeback/dead-letters/:id/history`
+- `POST /api/v1/operator/writeback/dead-letters/:id/replay`
+- `POST /api/v1/operator/writeback/dead-letters/:id/acknowledge`
 - `GET /api/v1/operator/writeback/jobs/:jobId`
 
 Sample:
@@ -80,4 +85,9 @@ curl -X POST http://localhost:3000/api/v1/note-compose \
 - `POST /api/v1/writeback/jobs`
 - `POST /api/v1/writeback/jobs/:jobId/transition`
 - `GET /api/v1/operator/writeback/status/summary`
+- `GET /api/v1/operator/writeback/dead-letters`
+- `GET /api/v1/operator/writeback/dead-letters/:id`
+- `GET /api/v1/operator/writeback/dead-letters/:id/history`
+- `POST /api/v1/operator/writeback/dead-letters/:id/replay`
+- `POST /api/v1/operator/writeback/dead-letters/:id/acknowledge`
 - `GET /api/v1/operator/writeback/jobs/:jobId`

@@ -104,4 +104,41 @@ describe('Block3 auth boundary for mutation endpoints', () => {
     await app.close();
   });
 
+  it('rejects unauthorized read access to operator writeback summary', async () => {
+    const app = buildApp();
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/v1/operator/writeback/status/summary'
+    });
+
+    expect(res.statusCode).toBe(401);
+    expect(res.json()).toMatchObject({
+      ok: false,
+      error: {
+        code: 'UNAUTHORIZED'
+      }
+    });
+
+    await app.close();
+  });
+
+  it('rejects unauthorized read access to operator writeback job details', async () => {
+    const app = buildApp();
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/v1/operator/writeback/jobs/non-existent-job'
+    });
+
+    expect(res.statusCode).toBe(401);
+    expect(res.json()).toMatchObject({
+      ok: false,
+      error: {
+        code: 'UNAUTHORIZED'
+      }
+    });
+
+    await app.close();
+  });
 });

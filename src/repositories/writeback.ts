@@ -5,8 +5,10 @@ import type {
   WritebackAttempt,
   WritebackJob,
   WritebackListFilters,
-  WritebackRepository
+  WritebackRepository,
+  WritebackStatusSummary
 } from './contracts.js';
+import { classifyWritebackFailureReason } from '../workers/writebackWorker.js';
 
 function toAttemptHistory(value: unknown): WritebackAttempt[] {
   if (!Array.isArray(value)) {
@@ -55,6 +57,34 @@ function applyListFilters(jobs: WritebackJob[], filters: WritebackListFilters): 
     .filter((job) => (noteIdFilter ? job.noteId === noteIdFilter : true))
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
     .slice(0, limit);
+}
+
+function emptySummary(sinceIso: string): WritebackStatusSummary {
+  return {
+    countsByStatus: {},
+    recentFailures: {
+      since: sinceIso,
+      total: 0,
+      retryable: 0,
+      nonRetryable: 0,
+      unknown: 0,
+      byReasonCode: {}
+    }
+  };
+}
+
+function toReasonCode(errorDetail: Record<string, unknown> | null): string | null {
+  if (!errorDetail) {
+    return null;
+  }
+
+  const reasonCandidate = errorDetail.reasonCode ?? errorDetail.code;
+  if (typeof reasonCandidate !== 'string') {
+    return null;
+  }
+
+  const normalized = reasonCandidate.trim().toUpperCase();
+  return normalized.length > 0 ? normalized : null;
 }
 
 export function createWritebackRepository(
@@ -227,6 +257,90 @@ export function createWritebackRepository(
       );
 
       return result.rows.map((row) => toWritebackJob(row as Record<string, unknown>));
+    },
+
+    async getStatusSummary(sinceIso) {
+      if (!db) {
+        const summary = emptySummary(sinceIso);
+        const sinceTs = new Date(sinceIso).getTime();
+
+        for (const job of store.writeback.values()) {
+          summary.countsByStatus[job.status] = (summary.countsByStatus[job.status] ?? 0) + 1;
+
+          for (const attempt of job.attemptHistory) {
+            const occurredAtTs = new Date(attempt.occurredAt).getTime();
+            if (Number.isNaN(occurredAtTs) || occurredAtTs < sinceTs) {
+              continue;
+            }
+
+            summary.recentFailures.total += 1;
+
+            const reasonCode = toReasonCode(attempt.errorDetail);
+            if (reasonCode) {
+              summary.recentFailures.byReasonCode[reasonCode] =
+                (summary.recentFailures.byReasonCode[reasonCode] ?? 0) + 1;
+            }
+
+            const classification = classifyWritebackFailureReason(reasonCode);
+            if (classification === 'retryable') {
+              summary.recentFailures.retryable += 1;
+            } else if (classification === 'non_retryable') {
+              summary.recentFailures.nonRetryable += 1;
+            } else {
+              summary.recentFailures.unknown += 1;
+            }
+          }
+        }
+
+        return summary;
+      }
+
+      const countsResult = await db.query(
+        `
+          SELECT status, COUNT(*)::int AS count
+          FROM writeback_jobs
+          GROUP BY status
+        `
+      );
+
+      const failuresResult = await db.query(
+        `
+          SELECT
+            COALESCE(NULLIF(UPPER(TRIM(attempt_elem->'errorDetail'->>'reasonCode')), ''), NULLIF(UPPER(TRIM(attempt_elem->'errorDetail'->>'code')), '')) AS reason_code
+          FROM writeback_jobs,
+               LATERAL jsonb_array_elements(attempt_history) AS attempt_elem
+          WHERE (attempt_elem->>'occurredAt')::timestamptz >= $1::timestamptz
+        `,
+        [sinceIso]
+      );
+
+      const summary = emptySummary(sinceIso);
+      for (const row of countsResult.rows as Array<Record<string, unknown>>) {
+        const status = String(row.status);
+        const count = Number(row.count);
+        summary.countsByStatus[status] = count;
+      }
+
+      for (const row of failuresResult.rows as Array<Record<string, unknown>>) {
+        const reasonCode = row.reason_code ? String(row.reason_code) : null;
+        summary.recentFailures.total += 1;
+
+        if (reasonCode) {
+          summary.recentFailures.byReasonCode[reasonCode] =
+            (summary.recentFailures.byReasonCode[reasonCode] ?? 0) + 1;
+        }
+
+        const classification = classifyWritebackFailureReason(reasonCode);
+        if (classification === 'retryable') {
+          summary.recentFailures.retryable += 1;
+        } else if (classification === 'non_retryable') {
+          summary.recentFailures.nonRetryable += 1;
+        } else {
+          summary.recentFailures.unknown += 1;
+        }
+      }
+
+      return summary;
     },
 
     async updateStatus(jobId, status, update) {

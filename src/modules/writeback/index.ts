@@ -68,6 +68,16 @@ function canTransitionWritebackJob(from: string, to: string): boolean {
   return ALLOWED_JOB_TRANSITIONS[from]?.has(to) ?? false;
 }
 
+function readFailureReasonCode(detail?: Record<string, unknown>): string | null {
+  const reasonCandidate = detail?.reasonCode ?? detail?.code;
+  if (typeof reasonCandidate !== 'string') {
+    return null;
+  }
+
+  const normalized = reasonCandidate.trim().toUpperCase();
+  return normalized.length > 0 ? normalized : null;
+}
+
 function sanitizeWritebackResponse<T>(payload: T): T {
   return redactSensitive(JSON.parse(JSON.stringify(payload)) as T);
 }
@@ -150,6 +160,18 @@ export const writebackRoutes: FastifyPluginAsync = async (app) => {
     });
 
     await app.repositories.notes.updateStatus(note.noteId, 'writeback_queued');
+    await app.repositories.audit.insert({
+      eventId: randomUUID(),
+      sessionId: note.sessionId,
+      noteId: note.noteId,
+      eventType: 'writeback_job_queued',
+      actor: 'system',
+      payload: {
+        jobId: job.jobId,
+        ehr: job.ehr,
+        status: job.status
+      }
+    });
 
     return reply.send({
       ok: true,
@@ -180,7 +202,9 @@ export const writebackRoutes: FastifyPluginAsync = async (app) => {
       }
 
       const failedTransition =
-        parsed.status === 'failed' ? resolveFailedTransition(job.attempts) : null;
+        parsed.status === 'failed'
+          ? resolveFailedTransition(job.attempts, undefined, readFailureReasonCode(parsed.lastErrorDetail))
+          : null;
       const nextJobStatus = failedTransition?.status ?? parsed.status;
       const nextAttempts = failedTransition?.nextAttempts ?? job.attempts;
       const nextAttemptHistory: WritebackAttempt[] =

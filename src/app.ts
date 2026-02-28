@@ -9,6 +9,7 @@ import { factLedgerRoutes } from './modules/fact-ledger/index.js';
 import { noteComposeRoutes } from './modules/note-compose/index.js';
 import { validationGateRoutes } from './modules/validation-gate/index.js';
 import { writebackRoutes } from './modules/writeback/index.js';
+import { operatorWritebackRoutes } from './modules/operator-writeback/index.js';
 import { sessionsRoutes } from './modules/sessions/index.js';
 import { dataLayerPlugin } from './plugins/dataLayer.js';
 
@@ -40,6 +41,7 @@ export function buildApp() {
   app.register(noteComposeRoutes, { prefix: '/api/v1' });
   app.register(validationGateRoutes, { prefix: '/api/v1' });
   app.register(writebackRoutes, { prefix: '/api/v1' });
+  app.register(operatorWritebackRoutes, { prefix: '/api/v1' });
 
   return app;
 }

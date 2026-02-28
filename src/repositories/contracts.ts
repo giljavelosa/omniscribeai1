@@ -123,6 +123,18 @@ export type WritebackListFilters = {
   limit?: number;
 };
 
+export type WritebackStatusSummary = {
+  countsByStatus: Record<string, number>;
+  recentFailures: {
+    since: string;
+    total: number;
+    retryable: number;
+    nonRetryable: number;
+    unknown: number;
+    byReasonCode: Record<string, number>;
+  };
+};
+
 export type WritebackStatusUpdate = {
   lastError?: string | null;
   lastErrorDetail?: Record<string, unknown> | null;
@@ -135,12 +147,14 @@ export interface WritebackRepository {
   getById(jobId: string): Promise<WritebackJob | null>;
   getByIdempotencyKey(idempotencyKey: string): Promise<WritebackJob | null>;
   list(filters: WritebackListFilters): Promise<WritebackJob[]>;
+  getStatusSummary(sinceIso: string): Promise<WritebackStatusSummary>;
   updateStatus(jobId: string, status: string, update?: WritebackStatusUpdate): Promise<void>;
 }
 
 export interface AuditRepository {
   insert(event: Omit<AuditEvent, 'createdAt'>): Promise<AuditEvent>;
   listBySession(sessionId: string): Promise<AuditEvent[]>;
+  listByNote(noteId: string): Promise<AuditEvent[]>;
 }
 
 export interface RepositoryBundle {

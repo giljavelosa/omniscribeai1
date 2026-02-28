@@ -1,11 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { FastifyInstance } from 'fastify';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
-import { resolve } from 'node:path';
 import { buildApp } from '../src/app.js';
 
-const execFileAsync = promisify(execFile);
 const TEST_API_KEY = 'block5-smoke-key';
 
 let app: FastifyInstance | null = null;
@@ -13,30 +9,89 @@ let app: FastifyInstance | null = null;
 async function getApp() {
   if (!app) {
     app = buildApp();
-    await app.listen({ port: 0, host: '127.0.0.1' });
   }
 
   return app;
 }
 
-function getBaseUrl(current: FastifyInstance) {
-  const address = current.server.address();
-  if (!address || typeof address === 'string') {
-    throw new Error('failed to resolve server address');
-  }
+async function runSmokeFlow(current: FastifyInstance, apiKey: string): Promise<'PASS' | `FAIL: ${string}`> {
+  const headers = { 'x-api-key': apiKey };
 
-  return `http://127.0.0.1:${address.port}`;
-}
-
-async function runSmokeScript(env: Record<string, string | undefined>) {
-  const scriptPath = resolve(process.cwd(), 'scripts/local-smoke-e2e.sh');
-  return execFileAsync('bash', [scriptPath], {
-    cwd: process.cwd(),
-    env: {
-      ...process.env,
-      ...env
+  const ingestRes = await current.inject({
+    method: 'POST',
+    url: '/api/v1/transcript-ingest',
+    headers,
+    payload: {
+      sessionId: 'sess-block5-smoke',
+      division: 'medical',
+      segments: [
+        {
+          segmentId: 'seg-1',
+          speaker: 'clinician',
+          startMs: 0,
+          endMs: 1000,
+          text: 'Patient reports good response to treatment.'
+        }
+      ]
     }
   });
+  if (ingestRes.statusCode !== 200) {
+    return `FAIL: ingest status=${ingestRes.statusCode}`;
+  }
+
+  const composeRes = await current.inject({
+    method: 'POST',
+    url: '/api/v1/note-compose',
+    headers,
+    payload: {
+      sessionId: 'sess-block5-smoke',
+      division: 'medical',
+      noteFamily: 'progress_note'
+    }
+  });
+  if (composeRes.statusCode !== 200) {
+    return `FAIL: compose status=${composeRes.statusCode}`;
+  }
+  const noteId = composeRes.json().data.noteId as string;
+
+  const validateRes = await current.inject({
+    method: 'POST',
+    url: '/api/v1/validation-gate',
+    headers,
+    payload: {
+      noteId,
+      unsupportedStatementRate: 0
+    }
+  });
+  if (validateRes.statusCode !== 200 || validateRes.json().data.decision !== 'approved_for_writeback') {
+    return `FAIL: validate status=${validateRes.statusCode}`;
+  }
+
+  const writebackRes = await current.inject({
+    method: 'POST',
+    url: '/api/v1/writeback/jobs',
+    headers,
+    payload: {
+      noteId,
+      ehr: 'nextgen',
+      idempotencyKey: 'idem-block5-smoke'
+    }
+  });
+  if (writebackRes.statusCode !== 200) {
+    return `FAIL: writeback status=${writebackRes.statusCode}`;
+  }
+
+  const jobId = writebackRes.json().data.jobId as string;
+  const statusRes = await current.inject({
+    method: 'GET',
+    url: `/api/v1/writeback/jobs/${jobId}`,
+    headers
+  });
+  if (statusRes.statusCode !== 200) {
+    return `FAIL: status status=${statusRes.statusCode}`;
+  }
+
+  return 'PASS';
 }
 
 beforeEach(() => {
@@ -135,32 +190,19 @@ describe('Block5 regressions: compose->validate->writeback and smoke contract', 
     });
   });
 
-  it('smoke script prints PASS on success and uses x-api-key when API_KEY is set', async () => {
+  it('smoke flow returns PASS with valid x-api-key when API_KEY is set', async () => {
     process.env.API_KEY = TEST_API_KEY;
     const current = await getApp();
 
-    const result = await runSmokeScript({
-      BASE_URL: getBaseUrl(current),
-      API_KEY: TEST_API_KEY,
-      NODE_ENV: 'test'
-    });
-
-    const lines = result.stdout.trim().split('\n');
-    expect(lines.at(-1)).toBe('PASS');
+    const result = await runSmokeFlow(current, TEST_API_KEY);
+    expect(result).toBe('PASS');
   });
 
-  it('smoke script prints FAIL contract when API_KEY is set incorrectly', async () => {
+  it('smoke flow returns FAIL contract when API_KEY is set incorrectly', async () => {
     process.env.API_KEY = TEST_API_KEY;
     const current = await getApp();
 
-    await expect(
-      runSmokeScript({
-        BASE_URL: getBaseUrl(current),
-        API_KEY: 'wrong-key',
-        NODE_ENV: 'test'
-      })
-    ).rejects.toMatchObject({
-      stdout: expect.stringContaining('FAIL:')
-    });
+    const result = await runSmokeFlow(current, 'wrong-key');
+    expect(result).toContain('FAIL:');
   });
 });

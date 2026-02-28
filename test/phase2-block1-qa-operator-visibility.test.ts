@@ -9,7 +9,6 @@ let app: FastifyInstance | null = null;
 async function getApp() {
   if (!app) {
     app = buildApp();
-    await app.listen({ port: 0, host: '127.0.0.1' });
   }
 
   return app;

@@ -60,6 +60,26 @@ export function createAuditRepository(db: DbExecutor | null, store: MemoryStore)
       );
 
       return result.rows.map((row) => toAuditEvent(row as Record<string, unknown>));
+    },
+
+    async listByNote(noteId) {
+      if (!db) {
+        return Array.from(store.audit.values())
+          .filter((event) => event.noteId === noteId)
+          .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+      }
+
+      const result = await db.query(
+        `
+          SELECT event_id, session_id, note_id, event_type, actor, payload, created_at
+          FROM audit_events
+          WHERE note_id = $1
+          ORDER BY created_at ASC
+        `,
+        [noteId]
+      );
+
+      return result.rows.map((row) => toAuditEvent(row as Record<string, unknown>));
     }
   };
 }

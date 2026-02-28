@@ -1,6 +1,6 @@
-# Dead-Letter Runbook (Phase 2 / Block 3)
+# Dead-Letter Runbook (Phase 2 / Block 4)
 
-Operator playbook for investigating and replaying `dead_failed` writeback jobs.
+Operator playbook for investigating, acknowledging, and replaying dead-letter writeback jobs.
 
 > Scope: writeback dead-letter handling only. Do **not** change product behavior from this runbook.
 
@@ -19,7 +19,19 @@ All endpoints below are under `/api/v1`.
 
 ---
 
-## 2) Triage flow
+## 2) Quick daily operator checklist
+
+Run this in order every day:
+
+1. **Summary** — check overall queue/failure shape.
+2. **Dead letters** — list and inspect dead-letter items.
+3. **Acknowledge or replay** — for each dead letter, either:
+   - acknowledge (known/accepted, no immediate replay), or
+   - replay (cause fixed and safe to retry).
+
+---
+
+## 3) Triage flow
 
 ### Step A — Check overall writeback health summary
 
@@ -37,70 +49,87 @@ Expected signal:
 ### Step B — List dead-letter jobs
 
 ```bash
-curl -s "$BASE_URL/api/v1/writeback/jobs?state=dead_failed&limit=50" \
+curl -s "$BASE_URL/api/v1/operator/writeback/dead-letters?limit=50" \
   -H "X-API-Key: $API_KEY"
 ```
 
-Use this list to pick a target `jobId` and `noteId`.
+Use this list to pick target `jobId`/`noteId` and reason codes.
 
-### Step C — Inspect dead-letter job detail + timeline
-
-Use the operator detail endpoint to see attempts and reason codes:
+### Step C — Inspect dead-letter detail + timeline
 
 ```bash
-JOB_ID=<dead_failed_job_id>
+JOB_ID=<dead_letter_job_id>
 
-curl -s "$BASE_URL/api/v1/operator/writeback/jobs/$JOB_ID" \
+curl -s "$BASE_URL/api/v1/operator/writeback/dead-letters/$JOB_ID" \
   -H "X-API-Key: $API_KEY"
 ```
 
 Review:
-- `data.job.status` (should be `dead_failed`)
+- `data.job.status` (`dead_failed`, `retryable_failed`, or `failed`)
+- `data.reasonCode`
 - `data.attempts[*].reasonCode`
 - `data.job.lastError` / `data.job.lastErrorDetail`
-- `data.timeline` for transition history
-
-### Step D — Confirm replay eligibility
-
-Before replaying:
-1. Verify failure cause is understood and addressed (EHR outage resolved, payload issue fixed upstream, etc.).
-2. Confirm this replay will not create duplicate downstream records.
-3. Confirm note is still appropriate for writeback.
+- `data.timeline`
 
 ---
 
-## 3) Replay procedure
+## 4) Acknowledge workflow
 
-### Important behavior
+Use acknowledge when the dead-letter item is understood and intentionally not replayed immediately.
 
-`dead_failed` jobs are terminal and cannot be transitioned back to `queued`.
-Replay is done by creating a **new** writeback job for the same note with a **new idempotency key**.
-
-### Step A — Create replay job
+### Step A — Acknowledge
 
 ```bash
-NOTE_ID=<note_id_from_dead_job>
-REPLAY_IDEMPOTENCY_KEY=replay-$(date +%s)-$NOTE_ID
+JOB_ID=<dead_letter_job_id>
 
-curl -s -X POST "$BASE_URL/api/v1/writeback/jobs" \
-  -H 'content-type: application/json' \
+curl -s -X POST "$BASE_URL/api/v1/operator/writeback/dead-letters/$JOB_ID/acknowledge" \
   -H "X-API-Key: $API_KEY" \
+  -H 'content-type: application/json' \
   -d '{
-    "noteId": "'"$NOTE_ID"'",
-    "ehr": "nextgen",
-    "idempotencyKey": "'"$REPLAY_IDEMPOTENCY_KEY"'"
+    "reason": "Known upstream issue; replay deferred until vendor confirms fix"
   }'
 ```
 
 Expected result:
 - `ok: true`
-- new `data.jobId`
-- `data.status: "queued"`
+- acknowledged dead-letter payload returned with acknowledgment metadata
 
-### Step B — Verify replay job detail
+### Expected acknowledge errors
+
+- `401 UNAUTHORIZED` — missing/invalid API key.
+- `404 DEAD_LETTER_NOT_FOUND` — job ID is unknown or not in dead-letter state.
+- `409 WRITEBACK_PRECONDITION_FAILED` — related note/job precondition missing.
+- `400 VALIDATION_ERROR` — malformed request body/ID.
+
+---
+
+## 5) Replay workflow
+
+### Important behavior
+
+- Dead-letter jobs are terminal; replay creates a **new queued job**.
+- Replay is linked to original (`replayOfJobId` / `replayedJobId`) for auditability.
+- Replay includes a guard to prevent unsafe/duplicate replays when note state cannot move to `writeback_queued`.
+
+### Step A — Replay dead letter
 
 ```bash
-NEW_JOB_ID=<new_job_id>
+JOB_ID=<dead_letter_job_id>
+
+curl -s -X POST "$BASE_URL/api/v1/operator/writeback/dead-letters/$JOB_ID/replay" \
+  -H "X-API-Key: $API_KEY"
+```
+
+Expected result:
+- `ok: true`
+- `data.originalJob.replayedJobId` populated
+- `data.replayJob.status: "queued"`
+- `data.replayJob.idempotencyKey` is a newly generated replay key
+
+### Step B — Verify replay detail
+
+```bash
+NEW_JOB_ID=<new_replay_job_id>
 
 curl -s "$BASE_URL/api/v1/operator/writeback/jobs/$NEW_JOB_ID" \
   -H "X-API-Key: $API_KEY"
@@ -113,49 +142,59 @@ curl -s "$BASE_URL/api/v1/operator/writeback/status/summary?recentHours=1" \
   -H "X-API-Key: $API_KEY"
 ```
 
----
+### Expected replay errors
 
-## 4) Safety cautions
-
-- **Never reuse idempotency keys** across distinct replay attempts.
-- **Do not bulk replay blindly** when reason code indicates systemic failure (for example persistent auth or endpoint outages).
-- **Rate-limit operational replays** to avoid retry storms against downstream EHR.
-- **Preserve auditability**: record incident/ticket ID and operator context for each replay batch.
-- **PHI caution**: avoid copying raw sensitive note content into tickets or chat; use identifiers and redacted details only.
+- `401 UNAUTHORIZED` — missing/invalid API key.
+- `404 DEAD_LETTER_NOT_FOUND` — job ID not found or not a dead-letter job.
+- `409 ILLEGAL_NOTE_STATE_TRANSITION` — **replay guard triggered** (note state cannot safely transition to `writeback_queued`, including already replayed/in-flight paths).
+- `409 WRITEBACK_PRECONDITION_FAILED` — note for dead-letter job is missing.
+- `400 VALIDATION_ERROR` — malformed ID/body.
 
 ---
 
-## 5) Rollback notes
+## 6) Safety cautions
+
+- **Do not bulk replay blindly** when reason code indicates systemic failure (persistent auth or endpoint outage).
+- **Acknowledge first** if root cause is not fixed yet.
+- **Rate-limit operator replays** to avoid retry storms against downstream EHR.
+- **Preserve auditability**: tie every acknowledge/replay action to incident/ticket ID.
+- **PHI caution**: avoid copying raw sensitive note content into tickets/chat; use identifiers and redacted context.
+
+---
+
+## 7) Rollback notes
 
 If replay causes adverse effects:
 
 1. **Stop further replays immediately** (operational freeze).
-2. Identify replayed jobs using the new idempotency-key pattern and inspect details:
-   - `GET /api/v1/writeback/jobs?state=queued|in_progress|retryable_failed|succeeded`
+2. Identify replayed jobs and inspect linked details:
+   - `GET /api/v1/operator/writeback/dead-letters/:id`
    - `GET /api/v1/operator/writeback/jobs/:jobId`
-3. Coordinate with downstream EHR owners for any external corrective action (duplicates/retractions).
+3. Coordinate with downstream EHR owners for external remediation (duplicates/retractions).
 4. Revert upstream/root-cause fix if needed before resuming replay.
 5. Re-run summary checks (`recentHours=1` and `recentHours=24`) to confirm stabilization.
 
-> Current implementation does not provide a cancel endpoint for already-created jobs; rollback is operational (stop/review/contain) plus downstream remediation.
-
 ---
 
-## 6) Quick command bundle
+## 8) Quick command bundle
 
 ```bash
 # summary (24h)
 curl -s "$BASE_URL/api/v1/operator/writeback/status/summary?recentHours=24" -H "X-API-Key: $API_KEY"
 
 # dead-letter list
-curl -s "$BASE_URL/api/v1/writeback/jobs?state=dead_failed&limit=50" -H "X-API-Key: $API_KEY"
+curl -s "$BASE_URL/api/v1/operator/writeback/dead-letters?limit=50" -H "X-API-Key: $API_KEY"
 
 # dead-letter detail
-curl -s "$BASE_URL/api/v1/operator/writeback/jobs/$JOB_ID" -H "X-API-Key: $API_KEY"
+curl -s "$BASE_URL/api/v1/operator/writeback/dead-letters/$JOB_ID" -H "X-API-Key: $API_KEY"
 
-# replay create
-curl -s -X POST "$BASE_URL/api/v1/writeback/jobs" \
-  -H 'content-type: application/json' \
+# acknowledge dead-letter
+curl -s -X POST "$BASE_URL/api/v1/operator/writeback/dead-letters/$JOB_ID/acknowledge" \
   -H "X-API-Key: $API_KEY" \
-  -d '{"noteId":"'"$NOTE_ID"'","ehr":"nextgen","idempotencyKey":"'"$REPLAY_IDEMPOTENCY_KEY"'"}'
+  -H 'content-type: application/json' \
+  -d '{"reason":"Deferred pending upstream fix"}'
+
+# replay dead-letter
+curl -s -X POST "$BASE_URL/api/v1/operator/writeback/dead-letters/$JOB_ID/replay" \
+  -H "X-API-Key: $API_KEY"
 ```

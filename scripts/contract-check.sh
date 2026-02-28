@@ -23,7 +23,7 @@ resolve_merge_base() {
   fi
 
   for deepen_by in 32 128 512; do
-    echo "Merge base not found yet; deepening clone by $deepen_by..."
+    echo "Merge base not found yet; deepening clone by $deepen_by..." >&2
     git fetch --no-tags --deepen="$deepen_by" origin "$BASE_FETCH_REFSPEC"
     if merge_base=$(git merge-base HEAD "$BASE_REMOTE_REF" 2>/dev/null); then
       echo "$merge_base"
@@ -32,7 +32,7 @@ resolve_merge_base() {
   done
 
   if [[ "$(git rev-parse --is-shallow-repository)" == "true" ]]; then
-    echo "Merge base still not found; unshallowing repository..."
+    echo "Merge base still not found; unshallowing repository..." >&2
     git fetch --no-tags --unshallow origin || git fetch --no-tags --depth=0 origin
     if merge_base=$(git merge-base HEAD "$BASE_REMOTE_REF" 2>/dev/null); then
       echo "$merge_base"

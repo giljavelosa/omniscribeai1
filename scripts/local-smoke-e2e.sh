@@ -39,7 +39,7 @@ WRITEBACK_RESPONSE=$(curl -sS -X POST "$BASE_URL/api/v1/writeback/jobs" "${CURL_
 JOB_ID=$(printf '%s' "$WRITEBACK_RESPONSE" | extract_json_field "data.jobId") || fail "writeback did not return jobId"
 
 echo "[5/5] writeback/jobs/:jobId"
-STATUS_RESPONSE=$(curl -sS "$BASE_URL/api/v1/writeback/jobs/$JOB_ID") || fail "writeback status request failed"
+STATUS_RESPONSE=$(curl -sS "$BASE_URL/api/v1/writeback/jobs/$JOB_ID" "${CURL_HEADERS[@]}") || fail "writeback status request failed"
 JOB_STATUS=$(printf '%s' "$STATUS_RESPONSE" | extract_json_field "data.status") || fail "status did not return job status"
 [[ "$JOB_STATUS" == "queued" ]] || fail "unexpected job status: $JOB_STATUS"
 

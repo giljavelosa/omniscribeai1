@@ -205,4 +205,258 @@ describe('Block5 regressions: compose->validate->writeback and smoke contract', 
     const result = await runSmokeFlow(current, 'wrong-key');
     expect(result).toContain('FAIL:');
   });
+
+  it('enforces replay race/idempotency guard and keeps dead-letter reason code normalization consistent', async () => {
+    process.env.API_KEY = TEST_API_KEY;
+    const current = await getApp();
+    const headers = { 'x-api-key': TEST_API_KEY };
+
+    const compose = await current.inject({
+      method: 'POST',
+      url: '/api/v1/note-compose',
+      headers,
+      payload: {
+        sessionId: 'sess-block5-replay-race',
+        division: 'medical',
+        noteFamily: 'progress_note'
+      }
+    });
+    const noteId = compose.json().data.noteId as string;
+
+    await current.inject({
+      method: 'POST',
+      url: '/api/v1/validation-gate',
+      headers,
+      payload: { noteId, unsupportedStatementRate: 0 }
+    });
+
+    const create = await current.inject({
+      method: 'POST',
+      url: '/api/v1/writeback/jobs',
+      headers,
+      payload: {
+        noteId,
+        ehr: 'nextgen',
+        idempotencyKey: 'idem-block5-replay-race'
+      }
+    });
+    const originalJobId = create.json().data.jobId as string;
+
+    await current.inject({
+      method: 'POST',
+      url: `/api/v1/writeback/jobs/${originalJobId}/transition`,
+      headers,
+      payload: {
+        status: 'failed',
+        lastError: 'upstream rejected payload',
+        lastErrorDetail: {
+          code: ' validation_error ',
+          patientEmail: 'patient@example.com'
+        }
+      }
+    });
+
+    const listed = await current.inject({
+      method: 'GET',
+      url: '/api/v1/operator/writeback/dead-letters?status=dead_failed&reason=validation_error',
+      headers
+    });
+    expect(listed.statusCode).toBe(200);
+    expect(listed.json()).toMatchObject({
+      ok: true,
+      data: [
+        {
+          jobId: originalJobId,
+          reasonCode: 'VALIDATION_ERROR',
+          status: 'dead_failed'
+        }
+      ]
+    });
+
+    const detail = await current.inject({
+      method: 'GET',
+      url: `/api/v1/operator/writeback/dead-letters/${originalJobId}`,
+      headers
+    });
+    expect(detail.statusCode).toBe(200);
+    expect(detail.json().data).toMatchObject({
+      reasonCode: 'VALIDATION_ERROR',
+      attempts: [
+        {
+          attempt: 1,
+          reasonCode: 'VALIDATION_ERROR'
+        }
+      ]
+    });
+
+    const [replayA, replayB] = await Promise.all([
+      current.inject({
+        method: 'POST',
+        url: `/api/v1/operator/writeback/dead-letters/${originalJobId}/replay`,
+        headers
+      }),
+      current.inject({
+        method: 'POST',
+        url: `/api/v1/operator/writeback/dead-letters/${originalJobId}/replay`,
+        headers
+      })
+    ]);
+
+    const responses = [replayA, replayB];
+    const successful = responses.find((res) => res.statusCode === 200);
+    expect(successful).toBeTruthy();
+    expect(responses.every((res) => res.statusCode === 200 || res.statusCode === 409)).toBe(true);
+
+    expect(successful?.json()).toMatchObject({
+      ok: true,
+      data: {
+        originalJob: {
+          jobId: originalJobId,
+          replayedJobId: expect.any(String)
+        },
+        replayJob: {
+          jobId: expect.any(String),
+          replayOfJobId: originalJobId
+        }
+      }
+    });
+
+    const replayAfterRace = await current.inject({
+      method: 'POST',
+      url: `/api/v1/operator/writeback/dead-letters/${originalJobId}/replay`,
+      headers
+    });
+    expect(replayAfterRace.statusCode).toBe(409);
+    expect(replayAfterRace.json()).toMatchObject({
+      ok: false,
+      error: {
+        code: 'WRITEBACK_REPLAY_ALREADY_EXISTS'
+      },
+      correlationId: expect.any(String)
+    });
+
+    const replayJobs = await current.repositories.writeback.list({
+      noteId,
+      limit: 20
+    });
+    const linkedReplays = replayJobs.filter((job) => job.replayOfJobId === originalJobId);
+    expect(linkedReplays.length).toBeGreaterThan(0);
+  });
+
+  it('dead-letter history endpoint enforces auth and returns stable 401 envelope', async () => {
+    process.env.API_KEY = TEST_API_KEY;
+    const current = await getApp();
+
+    const unauthorized = await current.inject({
+      method: 'GET',
+      url: '/api/v1/operator/writeback/dead-letters/00000000-0000-4000-8000-000000000111'
+    });
+
+    expect(unauthorized.statusCode).toBe(401);
+    expect(unauthorized.json()).toMatchObject({
+      ok: false,
+      error: {
+        code: 'UNAUTHORIZED',
+        message: expect.any(String)
+      },
+      correlationId: expect.any(String)
+    });
+  });
+
+  it('dead-letter history endpoint returns expected envelope and payload shape', async () => {
+    process.env.API_KEY = TEST_API_KEY;
+    const current = await getApp();
+    const headers = { 'x-api-key': TEST_API_KEY };
+
+    const compose = await current.inject({
+      method: 'POST',
+      url: '/api/v1/note-compose',
+      headers,
+      payload: {
+        sessionId: 'sess-block5-history-shape',
+        division: 'medical',
+        noteFamily: 'progress_note'
+      }
+    });
+    const noteId = compose.json().data.noteId as string;
+
+    await current.inject({
+      method: 'POST',
+      url: '/api/v1/validation-gate',
+      headers,
+      payload: { noteId, unsupportedStatementRate: 0 }
+    });
+
+    const create = await current.inject({
+      method: 'POST',
+      url: '/api/v1/writeback/jobs',
+      headers,
+      payload: {
+        noteId,
+        ehr: 'nextgen',
+        idempotencyKey: 'idem-block5-history-shape'
+      }
+    });
+    const originalJobId = create.json().data.jobId as string;
+
+    await current.inject({
+      method: 'POST',
+      url: `/api/v1/writeback/jobs/${originalJobId}/transition`,
+      headers,
+      payload: {
+        status: 'failed',
+        lastError: 'target schema mismatch',
+        lastErrorDetail: {
+          reasonCode: 'validation_error',
+          patientName: 'Alice Doe'
+        }
+      }
+    });
+
+    await current.inject({
+      method: 'POST',
+      url: `/api/v1/operator/writeback/dead-letters/${originalJobId}/replay`,
+      headers
+    });
+
+    const detail = await current.inject({
+      method: 'GET',
+      url: `/api/v1/operator/writeback/dead-letters/${originalJobId}`,
+      headers
+    });
+
+    expect(detail.statusCode).toBe(200);
+    expect(detail.json()).toMatchObject({
+      ok: true,
+      data: {
+        reasonCode: 'VALIDATION_ERROR',
+        job: {
+          jobId: originalJobId,
+          noteId,
+          status: 'dead_failed',
+          replayedJobId: expect.any(String)
+        },
+        attempts: [
+          {
+            attempt: 1,
+            reasonCode: 'VALIDATION_ERROR'
+          }
+        ],
+        timeline: expect.any(Array)
+      }
+    });
+
+    const body = detail.json().data;
+    expect(body.attempts[0].errorDetail.patientName).toBe('[REDACTED]');
+    expect(body.timeline.length).toBeGreaterThan(0);
+    expect(body.timeline.some((event: { eventType: string }) => event.eventType === 'writeback_job_queued')).toBe(
+      true
+    );
+    expect(
+      body.timeline.some((event: { eventType: string }) => event.eventType === 'writeback_transition_applied')
+    ).toBe(true);
+    expect(
+      body.timeline.some((event: { eventType: string }) => event.eventType === 'writeback_dead_letter_replayed')
+    ).toBe(true);
+  });
 });

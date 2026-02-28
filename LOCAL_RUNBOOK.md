@@ -16,7 +16,7 @@ Use these values for local dev:
 PORT=3000
 NODE_ENV=development
 LOG_LEVEL=info
-DATABASE_URL=postgresql://postgres:postgres@localhost:5432/omniscribe
+DATABASE_URL=postgresql://postgres:postgres@localhost:5433/omniscribe
 REDIS_URL=redis://localhost:6379
 ```
 
@@ -177,7 +177,7 @@ This runs:
 
 ## 7) Troubleshooting
 
-### Port conflicts (3000 / 5432 / 6379)
+### Port conflicts (3000 / 5433 / 6379)
 - Update `PORT` in `.env` for API.
 - Stop local conflicting services or remap Docker ports in `docker-compose.yml`.
 

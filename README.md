@@ -47,6 +47,8 @@ This runs `transcript-ingest -> note-compose -> validation-gate -> writeback/job
 docker compose up -d
 ```
 
+Note: Local Postgres is mapped to host port `5433` to avoid common conflicts on `5432`.
+
 ## API auth
 All mutation endpoints require `X-API-Key` when `API_KEY` is configured:
 - `POST /api/v1/transcript-ingest`

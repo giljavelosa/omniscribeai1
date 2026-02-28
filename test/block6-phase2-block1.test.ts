@@ -198,7 +198,9 @@ describe('phase2 block1 practical slice', () => {
         lastErrorDetail: {
           code: 'TIMEOUT',
           endpoint: '/ehr/writeback',
-          retryAfterMs: 5000
+          retryAfterMs: 5000,
+          accessToken: 'secret-token',
+          patientEmail: 'patient@example.com'
         }
       }
     });
@@ -216,7 +218,9 @@ describe('phase2 block1 practical slice', () => {
       lastError: 'timeout from upstream',
       lastErrorDetail: {
         code: 'TIMEOUT',
-        endpoint: '/ehr/writeback'
+        endpoint: '/ehr/writeback',
+        accessToken: '[REDACTED]',
+        patientEmail: '[REDACTED]'
       }
     });
     expect(details.json().data.attemptHistory).toHaveLength(1);
@@ -224,7 +228,11 @@ describe('phase2 block1 practical slice', () => {
       attempt: 1,
       fromStatus: 'queued',
       toStatus: 'retryable_failed',
-      error: 'timeout from upstream'
+      error: 'timeout from upstream',
+      errorDetail: {
+        accessToken: '[REDACTED]',
+        patientEmail: '[REDACTED]'
+      }
     });
 
     const auditEvents = await app.repositories.audit.listBySession('sess-block6-details-approved');

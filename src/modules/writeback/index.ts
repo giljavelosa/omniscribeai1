@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { canTransitionNoteStatus } from '../../lib/noteStateMachine.js';
 import type { WritebackAttempt } from '../../repositories/contracts.js';
 import { sendApiError } from '../../lib/apiError.js';
+import { redactSensitive } from '../../lib/redaction.js';
 import { requireMutationApiKey } from '../../plugins/apiKeyAuth.js';
 import { resolveFailedTransition } from '../../workers/writebackWorker.js';
 
@@ -67,6 +68,10 @@ function canTransitionWritebackJob(from: string, to: string): boolean {
   return ALLOWED_JOB_TRANSITIONS[from]?.has(to) ?? false;
 }
 
+function sanitizeWritebackResponse<T>(payload: T): T {
+  return redactSensitive(JSON.parse(JSON.stringify(payload)) as T);
+}
+
 export const writebackRoutes: FastifyPluginAsync = async (app) => {
   app.post('/writeback/jobs', { preHandler: requireMutationApiKey }, async (req, reply) => {
     const parsed = writebackSchema.parse(req.body);
@@ -93,7 +98,7 @@ export const writebackRoutes: FastifyPluginAsync = async (app) => {
         );
       }
 
-      return reply.send({ ok: true, data: existing, idempotentReplay: true });
+      return reply.send({ ok: true, data: sanitizeWritebackResponse(existing), idempotentReplay: true });
     }
 
     const note = await app.repositories.notes.getById(parsed.noteId);
@@ -148,7 +153,7 @@ export const writebackRoutes: FastifyPluginAsync = async (app) => {
 
     return reply.send({
       ok: true,
-      data: job
+      data: sanitizeWritebackResponse(job)
     });
   });
 
@@ -241,7 +246,7 @@ export const writebackRoutes: FastifyPluginAsync = async (app) => {
       });
 
       const updated = await app.repositories.writeback.getById(job.jobId);
-      return reply.send({ ok: true, data: updated });
+      return reply.send({ ok: true, data: sanitizeWritebackResponse(updated) });
     }
   );
 
@@ -253,7 +258,7 @@ export const writebackRoutes: FastifyPluginAsync = async (app) => {
       limit: parsed.limit
     });
 
-    return reply.send({ ok: true, data: jobs });
+    return reply.send({ ok: true, data: sanitizeWritebackResponse(jobs) });
   });
 
   app.get('/writeback/jobs/:jobId', { preHandler: requireMutationApiKey }, async (req, reply) => {
@@ -264,6 +269,6 @@ export const writebackRoutes: FastifyPluginAsync = async (app) => {
       return sendApiError(req, reply, 404, 'WRITEBACK_JOB_NOT_FOUND', `writeback job not found: ${jobId}`);
     }
 
-    return reply.send({ ok: true, data: job });
+    return reply.send({ ok: true, data: sanitizeWritebackResponse(job) });
   });
 };

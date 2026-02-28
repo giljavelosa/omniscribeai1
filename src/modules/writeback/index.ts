@@ -1,10 +1,12 @@
 import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 
-const writebackSchema = z.object({
-  noteId: z.string(),
-  ehr: z.enum(['nextgen', 'webpt'])
-});
+const writebackSchema = z
+  .object({
+    noteId: z.string().trim().min(1).max(128),
+    ehr: z.enum(['nextgen', 'webpt'])
+  })
+  .strict();
 
 export const writebackRoutes: FastifyPluginAsync = async (app) => {
   app.post('/writeback/jobs', async (req, reply) => {

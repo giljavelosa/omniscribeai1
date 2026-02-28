@@ -1,10 +1,12 @@
 import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 
-const validateSchema = z.object({
-  noteId: z.string(),
-  division: z.enum(['medical', 'rehab', 'bh'])
-});
+const validateSchema = z
+  .object({
+    noteId: z.string().trim().min(1).max(128),
+    division: z.enum(['medical', 'rehab', 'bh'])
+  })
+  .strict();
 
 export const validationGateRoutes: FastifyPluginAsync = async (app) => {
   app.post('/validation-gate', async (req, reply) => {

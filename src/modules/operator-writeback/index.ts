@@ -80,11 +80,11 @@ export const operatorWritebackRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.get('/operator/writeback/dead-letters/:id', { preHandler: requireMutationApiKey }, async (req, reply) => {
-    const { id } = req.params as { id: string };
-    const job = await app.repositories.writeback.getById(id);
+    const { jobId } = jobIdParamSchema.parse({ jobId: (req.params as { id?: string }).id });
+    const job = await app.repositories.writeback.getById(jobId);
 
     if (!job || !isDeadLetterStatus(job.status)) {
-      return sendApiError(req, reply, 404, 'DEAD_LETTER_NOT_FOUND', `dead-letter not found: ${id}`);
+      return sendApiError(req, reply, 404, 'DEAD_LETTER_NOT_FOUND', `dead-letter not found: ${jobId}`);
     }
 
     const timeline = (await app.repositories.audit.listByNote(job.noteId)).filter((event) => {
@@ -109,11 +109,30 @@ export const operatorWritebackRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.post('/operator/writeback/dead-letters/:id/replay', { preHandler: requireMutationApiKey }, async (req, reply) => {
-    const { id } = req.params as { id: string };
-    const original = await app.repositories.writeback.getById(id);
+    const { jobId } = jobIdParamSchema.parse({ jobId: (req.params as { id?: string }).id });
+    const original = await app.repositories.writeback.getById(jobId);
 
     if (!original || !isDeadLetterStatus(original.status)) {
-      return sendApiError(req, reply, 404, 'DEAD_LETTER_NOT_FOUND', `dead-letter not found: ${id}`);
+      return sendApiError(req, reply, 404, 'DEAD_LETTER_NOT_FOUND', `dead-letter not found: ${jobId}`);
+    }
+    if (original.status !== 'dead_failed') {
+      return sendApiError(
+        req,
+        reply,
+        409,
+        'DEAD_LETTER_REPLAY_REQUIRES_DEAD_FAILED',
+        `cannot replay dead-letter ${original.jobId}: status must be dead_failed; current=${original.status}`
+      );
+    }
+
+    if (original.replayedJobId) {
+      return sendApiError(
+        req,
+        reply,
+        409,
+        'WRITEBACK_REPLAY_ALREADY_EXISTS',
+        `dead-letter ${original.jobId} already replayed as ${original.replayedJobId}`
+      );
     }
 
     const note = await app.repositories.notes.getById(original.noteId);

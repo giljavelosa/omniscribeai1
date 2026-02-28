@@ -112,7 +112,5 @@ jobs:
       - name: Install deps
         run: npm ci
 
-      - name: Contract guard (placeholder)
-        run: |
-          echo "Contract check placeholder: enforce API schema/status-code snapshot checks here."
-          echo "For now, this gate is informational and passes."
+      - name: Contract guard
+        run: bash scripts/contract-check.sh

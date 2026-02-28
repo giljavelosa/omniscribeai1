@@ -1,6 +1,8 @@
 import { FastifyPluginAsync } from 'fastify';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
+import { sendApiError } from '../../lib/apiError.js';
+import { requireMutationApiKey } from '../../plugins/apiKeyAuth.js';
 
 const schema = z.object({
   sessionId: z.string(),
@@ -17,8 +19,30 @@ const schema = z.object({
 });
 
 export const transcriptIngestRoutes: FastifyPluginAsync = async (app) => {
-  app.post('/transcript-ingest', async (req, reply) => {
+  app.post('/transcript-ingest', { preHandler: requireMutationApiKey }, async (req, reply) => {
     const parsed = schema.parse(req.body);
+
+    if (parsed.segments.length === 0) {
+      return sendApiError(
+        req,
+        reply,
+        400,
+        'TRANSCRIPT_SEGMENTS_REQUIRED',
+        'At least one segment is required for transcript ingest'
+      );
+    }
+
+    const invalidSegment = parsed.segments.find((segment) => segment.endMs <= segment.startMs);
+    if (invalidSegment) {
+      return sendApiError(
+        req,
+        reply,
+        400,
+        'TRANSCRIPT_SEGMENT_RANGE_INVALID',
+        `segment ${invalidSegment.segmentId} must have endMs greater than startMs`
+      );
+    }
+
     await app.repositories.sessions.upsert({
       sessionId: parsed.sessionId,
       division: parsed.division,

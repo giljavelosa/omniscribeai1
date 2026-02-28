@@ -10,8 +10,8 @@ Covers highest-risk API safety behavior for ingest, validation gate, writeback, 
 - Priority: P0
 - Automation status: Runnable now
 - Assertion:
-  - malformed payload returns non-2xx (`4xx` or `5xx`)
-  - response includes structured error payload (`statusCode`, `error`, `message`)
+  - malformed payload returns `400`
+  - response includes standardized envelope (`ok=false`, `error.code`, `error.message`, `correlationId`)
 - Implemented in: `test/p0-critical-path.test.ts`
 
 2. BH risk gate hard stop
@@ -33,18 +33,18 @@ Covers highest-risk API safety behavior for ingest, validation gate, writeback, 
   - Runnable now to capture current EHR gate behavior (`nextgen` + `webpt` accepted)
   - Runnable expected-blocked for full idempotency semantics (no de-dup contract exposed)
 - Assertion now:
-  - missing required precondition fields is rejected with structured error
+  - missing required precondition fields is rejected with standardized validation envelope
 - Assertion pending:
   - duplicate idempotency key/precondition does not create duplicate queued job
 - Implemented in: `test/p0-critical-path.test.ts` (all executable)
 
 4. Illegal state transition rejection
-- Endpoint target: expected state-transition workflow endpoint
+- Endpoint target: `POST /api/v1/writeback/jobs/:jobId/transition`
 - Priority: P0
-- Automation status: Runnable expected-blocked (explicitly asserts endpoint is currently missing/unsupported)
+- Automation status: Runnable now
 - Assertion target:
-  - current system returns `404` for intended transition endpoint
-  - explicit disallowed-transition reason code remains pending endpoint/contract
+  - disallowed transition returns `409`
+  - response contains explicit reason code `ILLEGAL_WRITEBACK_STATE_TRANSITION`
 - Implemented in: `test/p0-critical-path.test.ts`
 
 ## Runnable now
@@ -52,12 +52,10 @@ Covers highest-risk API safety behavior for ingest, validation gate, writeback, 
   - malformed ingest rejection test
   - writeback precondition rejection test
   - BH validation-gate current `needs_review` behavior test
-  - BH hard-stop expected-blocked test (documents absence of `blocked` reason contract)
   - writeback EHR gate behavior test (`nextgen` + `webpt`)
-  - writeback idempotency expected-blocked test (documents missing de-dup contract)
-  - state-transition expected-blocked test (`404` endpoint missing)
+  - writeback idempotency replay test
+  - state-transition rejection contract test (`409` + explicit code)
 
 ## Pending implementation
 - BH risk hard-stop `blocked` behavior + reason-code contract
-- writeback idempotency/de-dup semantics (job identity + idempotency key contract)
-- explicit state transition API and rejection reason contract
+- BH risk hard-stop `blocked` reason-code contract

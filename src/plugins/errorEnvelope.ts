@@ -1,4 +1,7 @@
+import fp from 'fastify-plugin';
 import { FastifyPluginAsync } from 'fastify';
+import { ZodError } from 'zod';
+import { getCorrelationId } from '../lib/apiError.js';
 
 const INTERNAL_ERROR_MESSAGE = 'An unexpected error occurred';
 
@@ -16,18 +19,16 @@ function toErrorWithStatusCode(error: unknown): ErrorWithStatusCode {
   };
 }
 
-export const errorEnvelopePlugin: FastifyPluginAsync = async (app) => {
+const errorEnvelope: FastifyPluginAsync = async (app) => {
   app.setErrorHandler(async (error, req, reply) => {
     const safeError = toErrorWithStatusCode(error);
-    const statusCode =
+    const isValidationError = error instanceof ZodError || safeError.name === 'ZodError';
+    const baseStatusCode =
       typeof safeError.statusCode === 'number' && safeError.statusCode >= 400
         ? safeError.statusCode
         : 500;
-    const correlationId = String(
-      reply.getHeader('x-correlation-id') ?? req.headers['x-correlation-id'] ?? ''
-    );
-
-    const isValidationError = safeError.name === 'ZodError';
+    const statusCode = isValidationError ? 400 : baseStatusCode;
+    const correlationId = getCorrelationId(req, reply);
     const code = isValidationError
       ? 'VALIDATION_ERROR'
       : statusCode >= 500
@@ -55,9 +56,7 @@ export const errorEnvelopePlugin: FastifyPluginAsync = async (app) => {
   });
 
   app.setNotFoundHandler(async (req, reply) => {
-    const correlationId = String(
-      reply.getHeader('x-correlation-id') ?? req.headers['x-correlation-id'] ?? ''
-    );
+    const correlationId = getCorrelationId(req, reply);
     return reply.status(404).send({
       ok: false,
       error: {
@@ -68,3 +67,5 @@ export const errorEnvelopePlugin: FastifyPluginAsync = async (app) => {
     });
   });
 };
+
+export const errorEnvelopePlugin = fp(errorEnvelope);

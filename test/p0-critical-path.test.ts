@@ -1,8 +1,9 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { FastifyInstance } from 'fastify';
 import { buildApp } from '../src/app.js';
 
 let app: FastifyInstance | null = null;
+const TEST_API_KEY = 'test-api-key';
 
 async function getApp() {
   if (!app) {
@@ -11,21 +12,38 @@ async function getApp() {
   return app;
 }
 
-async function injectJson(method: 'POST' | 'GET', url: string, payload?: unknown) {
+async function injectJson(
+  method: 'POST' | 'GET',
+  url: string,
+  payload?: unknown,
+  withAuth = true
+) {
   const current = await getApp();
-  const headers = method === 'POST' && process.env.API_KEY ? { 'x-api-key': process.env.API_KEY } : undefined;
+  const headers =
+    method === 'POST' && withAuth
+      ? {
+          'x-api-key': TEST_API_KEY
+        }
+      : undefined;
+
   return current.inject({ method, url, payload, headers });
 }
+
+beforeEach(() => {
+  process.env.NODE_ENV = 'test';
+  process.env.API_KEY = TEST_API_KEY;
+});
 
 afterEach(async () => {
   if (app) {
     await app.close();
     app = null;
   }
+  delete process.env.API_KEY;
 });
 
 describe('P0 API safety rails', () => {
-  it('rejects malformed transcript ingest payloads with 400 + error envelope (no silent failure)', async () => {
+  it('rejects malformed transcript ingest payloads with a 400 validation envelope', async () => {
     const res = await injectJson('POST', '/api/v1/transcript-ingest', {
       sessionId: 'sess-1',
       segments: [
@@ -40,12 +58,34 @@ describe('P0 API safety rails', () => {
     });
 
     expect(res.statusCode).toBe(400);
+    expect(res.json()).toMatchObject({
+      ok: false,
+      error: {
+        code: 'VALIDATION_ERROR',
+        message: expect.any(String)
+      },
+      correlationId: expect.any(String)
+    });
+  });
 
-    const body = res.json();
-    expect(body).toMatchObject({
-      error: expect.any(String),
-      message: expect.any(String),
-      statusCode: expect.any(Number)
+  it('enforces API key auth on mutation endpoints', async () => {
+    const res = await injectJson(
+      'POST',
+      '/api/v1/transcript-ingest',
+      {
+        sessionId: 'sess-unauth',
+        division: 'medical',
+        segments: []
+      },
+      false
+    );
+
+    expect(res.statusCode).toBe(401);
+    expect(res.json()).toMatchObject({
+      ok: false,
+      error: {
+        code: 'UNAUTHORIZED'
+      }
     });
   });
 
@@ -55,12 +95,13 @@ describe('P0 API safety rails', () => {
     });
 
     expect(res.statusCode).toBe(400);
-
-    const body = res.json();
-    expect(body).toMatchObject({
-      error: expect.any(String),
-      message: expect.any(String),
-      statusCode: expect.any(Number)
+    expect(res.json()).toMatchObject({
+      ok: false,
+      error: {
+        code: 'VALIDATION_ERROR',
+        message: expect.any(String)
+      },
+      correlationId: expect.any(String)
     });
   });
 
@@ -120,8 +161,7 @@ describe('P0 API safety rails', () => {
     expect(writebackRes.json()).toMatchObject({
       ok: false,
       error: {
-        code: 'WRITEBACK_PRECONDITION_FAILED',
-        message: expect.any(String)
+        code: 'WRITEBACK_PRECONDITION_FAILED'
       }
     });
   });
@@ -150,8 +190,7 @@ describe('P0 API safety rails', () => {
     expect(webptRes.json()).toMatchObject({
       ok: false,
       error: {
-        code: 'UNSUPPORTED_EHR_TARGET',
-        message: expect.any(String)
+        code: 'UNSUPPORTED_EHR_TARGET'
       }
     });
   });
@@ -182,5 +221,38 @@ describe('P0 API safety rails', () => {
     expect(secondBody.idempotentReplay).toBe(true);
     expect(secondBody.data.jobId).toBe(firstBody.data.jobId);
     expect(secondBody.data.idempotencyKey).toBe(payload.idempotencyKey);
+  });
+
+  it('rejects illegal writeback status transitions with explicit error code', async () => {
+    const composeRes = await injectJson('POST', '/api/v1/note-compose', {
+      sessionId: 'sess-transition-1',
+      division: 'medical',
+      noteFamily: 'progress_note'
+    });
+    const noteId = composeRes.json().data.noteId;
+
+    await injectJson('POST', '/api/v1/validation-gate', {
+      noteId,
+      unsupportedStatementRate: 0
+    });
+
+    const writebackRes = await injectJson('POST', '/api/v1/writeback/jobs', {
+      noteId,
+      ehr: 'nextgen',
+      idempotencyKey: 'idem-transition-1'
+    });
+    const jobId = writebackRes.json().data.jobId;
+
+    const illegalTransitionRes = await injectJson('POST', `/api/v1/writeback/jobs/${jobId}/transition`, {
+      status: 'queued'
+    });
+
+    expect(illegalTransitionRes.statusCode).toBe(409);
+    expect(illegalTransitionRes.json()).toMatchObject({
+      ok: false,
+      error: {
+        code: 'ILLEGAL_WRITEBACK_STATE_TRANSITION'
+      }
+    });
   });
 });

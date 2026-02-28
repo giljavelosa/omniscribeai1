@@ -1,12 +1,19 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.js';
 
-const API_KEY = process.env.API_KEY;
+const API_KEY = 'block3-test-key';
 
 describe('Block3 auth boundary for mutation endpoints', () => {
-  it('returns 401 envelope for unauthorized mutation when API_KEY is set', async () => {
-    expect(API_KEY, 'Set API_KEY in test env to run Block3 auth tests').toBeTruthy();
+  beforeEach(() => {
+    process.env.NODE_ENV = 'test';
+    process.env.API_KEY = API_KEY;
+  });
 
+  afterEach(() => {
+    delete process.env.API_KEY;
+  });
+
+  it('returns 401 envelope for unauthorized mutation when API_KEY is set', async () => {
     const app = buildApp();
 
     const res = await app.inject({
@@ -32,15 +39,13 @@ describe('Block3 auth boundary for mutation endpoints', () => {
   });
 
   it('allows authorized mutation with valid x-api-key when API_KEY is set', async () => {
-    expect(API_KEY, 'Set API_KEY in test env to run Block3 auth tests').toBeTruthy();
-
     const app = buildApp();
 
     const res = await app.inject({
       method: 'POST',
       url: '/api/v1/note-compose',
       headers: {
-        'x-api-key': API_KEY as string
+        'x-api-key': API_KEY
       },
       payload: {
         sessionId: 'sess-auth-ok-1',

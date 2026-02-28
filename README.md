@@ -12,6 +12,8 @@ npm install
 cp .env.example .env
 ```
 
+Set `API_KEY` in `.env` for non-development environments. In `NODE_ENV=development`, requests are allowed without `API_KEY` and the server logs a warning.
+
 ## Run (dev)
 ```bash
 npm run dev
@@ -33,6 +35,22 @@ npm run test
 docker compose up -d
 ```
 
+## API auth
+All mutation endpoints require `X-API-Key` when `API_KEY` is configured:
+- `POST /api/v1/transcript-ingest`
+- `POST /api/v1/note-compose`
+- `POST /api/v1/validation-gate`
+- `POST /api/v1/writeback/jobs`
+- `POST /api/v1/writeback/jobs/:jobId/transition`
+
+Sample:
+```bash
+curl -X POST http://localhost:3000/api/v1/note-compose \
+  -H 'Content-Type: application/json' \
+  -H 'X-API-Key: your-api-key' \
+  -d '{"sessionId":"sess-1","division":"medical","noteFamily":"progress_note"}'
+```
+
 ## API endpoints
 - `GET /health`
 - `POST /api/v1/transcript-ingest`
@@ -40,6 +58,4 @@ docker compose up -d
 - `POST /api/v1/note-compose`
 - `POST /api/v1/validation-gate`
 - `POST /api/v1/writeback/jobs`
-
-## Local runbook
-- See [`LOCAL_RUNBOOK.md`](./LOCAL_RUNBOOK.md) for practical local bring-up (env vars, docker services, migrations, API start, end-to-end smoke curl flow, troubleshooting).
+- `POST /api/v1/writeback/jobs/:jobId/transition`

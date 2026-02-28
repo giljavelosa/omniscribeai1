@@ -1,7 +1,18 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.js';
 
+const TEST_API_KEY = 'test-api-key';
+
 describe('transcript ingest + session status', () => {
+  beforeEach(() => {
+    process.env.NODE_ENV = 'test';
+    process.env.API_KEY = TEST_API_KEY;
+  });
+
+  afterEach(() => {
+    delete process.env.API_KEY;
+  });
+
   it('upserts segments idempotently and exposes session status', async () => {
     const app = buildApp();
 
@@ -26,13 +37,15 @@ describe('transcript ingest + session status', () => {
       ]
     };
 
-    const res1 = await app.inject({ method: 'POST', url: '/api/v1/transcript-ingest', payload });
+    const headers = { 'x-api-key': TEST_API_KEY };
+
+    const res1 = await app.inject({ method: 'POST', url: '/api/v1/transcript-ingest', payload, headers });
     expect(res1.statusCode).toBe(200);
     const body1 = res1.json();
     expect(body1.ok).toBe(true);
     expect(body1.data.factExtractionJobId).toBe('sess-1:fact-extract');
 
-    const res2 = await app.inject({ method: 'POST', url: '/api/v1/transcript-ingest', payload });
+    const res2 = await app.inject({ method: 'POST', url: '/api/v1/transcript-ingest', payload, headers });
     expect(res2.statusCode).toBe(200);
 
     const statusRes = await app.inject({ method: 'GET', url: '/api/v1/sessions/sess-1/status' });

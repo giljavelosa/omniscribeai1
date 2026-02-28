@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
+import { sendApiError } from '../../lib/apiError.js';
+import { requireMutationApiKey } from '../../plugins/apiKeyAuth.js';
 
 const composeSchema = z.object({
   sessionId: z.string(),
@@ -20,7 +22,7 @@ function buildDeterministicBody(division: 'medical' | 'rehab' | 'bh', noteFamily
 }
 
 export const noteComposeRoutes: FastifyPluginAsync = async (app) => {
-  app.post('/note-compose', async (req, reply) => {
+  app.post('/note-compose', { preHandler: requireMutationApiKey }, async (req, reply) => {
     const parsed = composeSchema.parse(req.body);
 
     const session = await app.repositories.sessions.getById(parsed.sessionId);
@@ -30,6 +32,14 @@ export const noteComposeRoutes: FastifyPluginAsync = async (app) => {
         division: parsed.division,
         status: 'composing'
       });
+    } else if (session.division !== parsed.division) {
+      return sendApiError(
+        req,
+        reply,
+        409,
+        'SESSION_DIVISION_MISMATCH',
+        `session ${parsed.sessionId} is ${session.division}, not ${parsed.division}`
+      );
     }
 
     const noteId = randomUUID();

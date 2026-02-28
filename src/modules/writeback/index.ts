@@ -167,6 +167,7 @@ export const writebackRoutes: FastifyPluginAsync = async (app) => {
       idempotencyKey: parsed.idempotencyKey,
       replayOfJobId: null,
       replayedJobId: null,
+      operatorStatus: 'open',
       status: 'queued',
       attempts: 0,
       lastError: null,

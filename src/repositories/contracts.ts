@@ -71,6 +71,7 @@ export type WritebackJob = {
   idempotencyKey: string;
   replayOfJobId: string | null;
   replayedJobId: string | null;
+  operatorStatus: 'open' | 'acknowledged';
   status: string;
   attempts: number;
   lastError: string | null;
@@ -133,6 +134,10 @@ export type DeadLetterListFilters = {
 
 export type WritebackStatusSummary = {
   countsByStatus: Record<string, number>;
+  deadLetterOperatorCounts: {
+    open: number;
+    acknowledged: number;
+  };
   recentFailures: {
     since: string;
     total: number;
@@ -157,6 +162,7 @@ export interface WritebackRepository {
   list(filters: WritebackListFilters): Promise<WritebackJob[]>;
   listDeadLetters(filters: DeadLetterListFilters): Promise<WritebackJob[]>;
   getStatusSummary(sinceIso: string): Promise<WritebackStatusSummary>;
+  updateOperatorStatus(jobId: string, operatorStatus: WritebackJob['operatorStatus']): Promise<void>;
   updateStatus(jobId: string, status: string, update?: WritebackStatusUpdate): Promise<void>;
   linkReplay(originalJobId: string, replayJobId: string): Promise<void>;
 }

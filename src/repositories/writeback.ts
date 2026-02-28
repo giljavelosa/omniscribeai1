@@ -38,6 +38,7 @@ function toWritebackJob(row: Record<string, unknown>): WritebackJob {
     idempotencyKey: String(value.idempotency_key),
     replayOfJobId: value.replay_of_job_id ? String(value.replay_of_job_id) : null,
     replayedJobId: value.replayed_job_id ? String(value.replayed_job_id) : null,
+    operatorStatus: value.operator_status === 'acknowledged' ? 'acknowledged' : 'open',
     status: String(value.status),
     attempts: Number(value.attempts),
     lastError: value.last_error ? String(value.last_error) : null,
@@ -83,6 +84,10 @@ function applyDeadLetterFilters(jobs: WritebackJob[], filters: DeadLetterListFil
 function emptySummary(sinceIso: string): WritebackStatusSummary {
   return {
     countsByStatus: {},
+    deadLetterOperatorCounts: {
+      open: 0,
+      acknowledged: 0
+    },
     recentFailures: {
       since: sinceIso,
       total: 0,
@@ -130,6 +135,7 @@ export function createWritebackRepository(
             idempotency_key,
             replay_of_job_id,
             replayed_job_id,
+            operator_status,
             status,
             attempts,
             last_error,
@@ -144,6 +150,7 @@ export function createWritebackRepository(
             idempotency_key,
             replay_of_job_id,
             replayed_job_id,
+            operator_status,
             status,
             attempts,
             last_error,
@@ -159,6 +166,7 @@ export function createWritebackRepository(
           job.idempotencyKey,
           job.replayOfJobId,
           job.replayedJobId,
+          job.operatorStatus,
           job.status,
           job.attempts,
           job.lastError,
@@ -184,6 +192,7 @@ export function createWritebackRepository(
             idempotency_key,
             replay_of_job_id,
             replayed_job_id,
+            operator_status,
             status,
             attempts,
             last_error,
@@ -221,6 +230,7 @@ export function createWritebackRepository(
             idempotency_key,
             replay_of_job_id,
             replayed_job_id,
+            operator_status,
             status,
             attempts,
             last_error,
@@ -274,6 +284,7 @@ export function createWritebackRepository(
             idempotency_key,
             replay_of_job_id,
             replayed_job_id,
+            operator_status,
             status,
             attempts,
             last_error,
@@ -325,6 +336,7 @@ export function createWritebackRepository(
             idempotency_key,
             replay_of_job_id,
             replayed_job_id,
+            operator_status,
             status,
             attempts,
             last_error,
@@ -350,6 +362,9 @@ export function createWritebackRepository(
 
         for (const job of store.writeback.values()) {
           summary.countsByStatus[job.status] = (summary.countsByStatus[job.status] ?? 0) + 1;
+          if (['retryable_failed', 'dead_failed', 'failed'].includes(job.status)) {
+            summary.deadLetterOperatorCounts[job.operatorStatus] += 1;
+          }
 
           for (const attempt of job.attemptHistory) {
             const occurredAtTs = new Date(attempt.occurredAt).getTime();
@@ -386,6 +401,14 @@ export function createWritebackRepository(
           GROUP BY status
         `
       );
+      const deadLetterOperatorCountsResult = await db.query(
+        `
+          SELECT operator_status, COUNT(*)::int AS count
+          FROM writeback_jobs
+          WHERE status IN ('retryable_failed', 'dead_failed', 'failed')
+          GROUP BY operator_status
+        `
+      );
 
       const failuresResult = await db.query(
         `
@@ -403,6 +426,11 @@ export function createWritebackRepository(
         const status = String(row.status);
         const count = Number(row.count);
         summary.countsByStatus[status] = count;
+      }
+      for (const row of deadLetterOperatorCountsResult.rows as Array<Record<string, unknown>>) {
+        const operatorStatus = row.operator_status === 'acknowledged' ? 'acknowledged' : 'open';
+        const count = Number(row.count);
+        summary.deadLetterOperatorCounts[operatorStatus] = count;
       }
 
       for (const row of failuresResult.rows as Array<Record<string, unknown>>) {
@@ -425,6 +453,32 @@ export function createWritebackRepository(
       }
 
       return summary;
+    },
+
+    async updateOperatorStatus(jobId, operatorStatus) {
+      if (!db) {
+        const existing = store.writeback.get(jobId);
+        if (!existing) {
+          return;
+        }
+
+        store.writeback.set(jobId, {
+          ...existing,
+          operatorStatus,
+          updatedAt: new Date().toISOString()
+        });
+        return;
+      }
+
+      await db.query(
+        `
+          UPDATE writeback_jobs
+          SET operator_status = $2,
+              updated_at = NOW()
+          WHERE job_id = $1
+        `,
+        [jobId, operatorStatus]
+      );
     },
 
     async updateStatus(jobId, status, update) {

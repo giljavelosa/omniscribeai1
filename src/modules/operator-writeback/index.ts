@@ -52,6 +52,7 @@ export const operatorWritebackRoutes: FastifyPluginAsync = async (app) => {
       ok: true,
       data: {
         countsByStatus: summary.countsByStatus,
+        deadLetterOperatorCounts: summary.deadLetterOperatorCounts,
         recentFailures: {
           ...summary.recentFailures,
           windowHours: parsed.recentHours
@@ -72,8 +73,13 @@ export const operatorWritebackRoutes: FastifyPluginAsync = async (app) => {
       ok: true,
       data: sanitize(
         jobs.map((job) => ({
-          ...job,
-          reasonCode: readReasonCode(job.lastErrorDetail)
+          jobId: job.jobId,
+          noteId: job.noteId,
+          status: job.status,
+          operatorStatus: job.operatorStatus,
+          reasonCode: readReasonCode(job.lastErrorDetail),
+          attempts: job.attempts,
+          updatedAt: job.updatedAt
         }))
       )
     });
@@ -163,6 +169,7 @@ export const operatorWritebackRoutes: FastifyPluginAsync = async (app) => {
       idempotencyKey: `replay-${original.jobId}-${randomUUID()}`,
       replayOfJobId: original.jobId,
       replayedJobId: null,
+      operatorStatus: 'open',
       status: 'queued',
       attempts: 0,
       lastError: null,
@@ -198,6 +205,37 @@ export const operatorWritebackRoutes: FastifyPluginAsync = async (app) => {
       })
     });
   });
+
+  app.post(
+    '/operator/writeback/dead-letters/:id/acknowledge',
+    { preHandler: requireMutationApiKey },
+    async (req, reply) => {
+      const { jobId } = jobIdParamSchema.parse({ jobId: (req.params as { id?: string }).id });
+      const job = await app.repositories.writeback.getById(jobId);
+
+      if (!job || !isDeadLetterStatus(job.status)) {
+        return sendApiError(req, reply, 404, 'DEAD_LETTER_NOT_FOUND', `dead-letter not found: ${jobId}`);
+      }
+
+      if (job.operatorStatus !== 'open') {
+        return sendApiError(
+          req,
+          reply,
+          409,
+          'DEAD_LETTER_ALREADY_ACKNOWLEDGED',
+          `cannot acknowledge dead-letter ${job.jobId}: operatorStatus is ${job.operatorStatus}`
+        );
+      }
+
+      await app.repositories.writeback.updateOperatorStatus(job.jobId, 'acknowledged');
+      const updated = await app.repositories.writeback.getById(job.jobId);
+
+      return reply.send({
+        ok: true,
+        data: sanitize(updated)
+      });
+    }
+  );
 
   app.get('/operator/writeback/jobs/:jobId', { preHandler: requireMutationApiKey }, async (req, reply) => {
     const { jobId } = jobIdParamSchema.parse(req.params);

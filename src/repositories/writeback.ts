@@ -89,7 +89,7 @@ export function createWritebackRepository(
       return toWritebackJob(result.rows[0] as Record<string, unknown>);
     },
 
-    async updateStatus(jobId, status, lastError) {
+    async updateStatus(jobId, status, lastError, attempts) {
       if (!db) {
         const existing = store.writeback.get(jobId);
         if (!existing) {
@@ -99,6 +99,7 @@ export function createWritebackRepository(
         store.writeback.set(jobId, {
           ...existing,
           status,
+          attempts: attempts ?? existing.attempts,
           lastError: lastError ?? existing.lastError,
           updatedAt: new Date().toISOString()
         });
@@ -110,10 +111,11 @@ export function createWritebackRepository(
           UPDATE writeback_jobs
           SET status = $2,
               last_error = COALESCE($3, last_error),
+              attempts = COALESCE($4, attempts),
               updated_at = NOW()
           WHERE job_id = $1
         `,
-        [jobId, status, lastError ?? null]
+        [jobId, status, lastError ?? null, attempts ?? null]
       );
     }
   };

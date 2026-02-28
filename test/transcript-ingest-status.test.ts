@@ -7,6 +7,8 @@ describe('transcript ingest + session status', () => {
   beforeEach(() => {
     process.env.NODE_ENV = 'test';
     process.env.API_KEY = TEST_API_KEY;
+    delete process.env.REDIS_URL;
+    delete process.env.DATABASE_URL;
   });
 
   afterEach(() => {
@@ -55,7 +57,7 @@ describe('transcript ingest + session status', () => {
     expect(statusBody.ok).toBe(true);
     expect(statusBody.data.sessionId).toBe('sess-1');
     expect(statusBody.data.division).toBe('medical');
-    expect(statusBody.data.status).toBe('fact_extraction_queued');
+    expect(statusBody.data.status).toBe('fact_extraction_completed');
     expect(statusBody.data.segmentsIngested).toBe(2);
     expect(statusBody.data.factExtraction.queued).toBe(true);
 

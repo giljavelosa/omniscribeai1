@@ -21,6 +21,7 @@ const schema = z.object({
 export const transcriptIngestRoutes: FastifyPluginAsync = async (app) => {
   app.post('/transcript-ingest', { preHandler: requireMutationApiKey }, async (req, reply) => {
     const parsed = schema.parse(req.body);
+    const jobId = `${parsed.sessionId}:fact-extract`;
 
     if (parsed.segments.length === 0) {
       return sendApiError(
@@ -60,11 +61,6 @@ export const transcriptIngestRoutes: FastifyPluginAsync = async (app) => {
       }))
     );
 
-    const queueResult = await app.factExtractionQueue.enqueue({
-      sessionId: parsed.sessionId,
-      division: parsed.division
-    });
-
     await app.repositories.audit.insert({
       eventId: randomUUID(),
       sessionId: parsed.sessionId,
@@ -72,12 +68,17 @@ export const transcriptIngestRoutes: FastifyPluginAsync = async (app) => {
       eventType: 'fact_extraction_queued',
       actor: 'system',
       payload: {
-        jobId: queueResult.jobId,
+        jobId,
         segmentCount: parsed.segments.length
       }
     });
 
     await app.repositories.sessions.updateStatus(parsed.sessionId, 'fact_extraction_queued');
+
+    const queueResult = await app.factExtractionQueue.enqueue({
+      sessionId: parsed.sessionId,
+      division: parsed.division
+    });
 
     return reply.send({
       ok: true,
@@ -85,7 +86,7 @@ export const transcriptIngestRoutes: FastifyPluginAsync = async (app) => {
         sessionId: parsed.sessionId,
         accepted: parsed.segments.length,
         division: parsed.division,
-        factExtractionJobId: queueResult.jobId
+        factExtractionJobId: queueResult.jobId ?? jobId
       }
     });
   });

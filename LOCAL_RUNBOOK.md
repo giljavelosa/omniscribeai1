@@ -23,6 +23,7 @@ REDIS_URL=redis://localhost:6379
 Notes:
 - `DATABASE_URL` is required for persistent Postgres-backed repositories and migrations.
 - `REDIS_URL` enables BullMQ-backed fact extraction queueing. If omitted, queue falls back to in-memory.
+- If `REDIS_URL` is set but Redis is unavailable at enqueue time, ingest falls back to in-memory fact extraction.
 
 ## 2) Bring up Postgres + Redis (Docker Compose)
 
@@ -116,7 +117,8 @@ COMPOSE_RESPONSE=$(curl -s -X POST "$BASE_URL/api/v1/note-compose" \
   -d '{
     "sessionId": "'"$SESSION_ID"'",
     "division": "medical",
-    "noteFamily": "progress"
+    "noteFamily": "progress",
+    "useExistingFacts": true
   }')
 
 echo "$COMPOSE_RESPONSE"
@@ -154,10 +156,13 @@ curl -s "$BASE_URL/api/v1/sessions/$SESSION_ID/status"
 Expected outcome:
 - When API_KEY is configured, include `X-API-Key` on all mutation endpoints.
 - ingest returns `ok: true`
+- ingest triggers fact extraction (BullMQ worker when Redis is available, in-memory immediate fallback otherwise)
 - compose returns note with `status: "draft_created"`
+- compose includes `data.metadata.factCount` and `data.metadata.usedExistingFacts`
 - validation returns `decision: "approved_for_writeback"`
 - writeback create returns job with `status: "queued"`
 - status fetch returns that same queued job
+- transition with `status: "failed"` resolves to `retryable_failed` or `dead_failed` by attempt count
 
 ## 6) Optional helper: one-command local bring-up
 
@@ -179,10 +184,24 @@ This runs:
 ### `No DATABASE_URL configured; skipping migrations.`
 - Ensure `.env` exists and `DATABASE_URL` is set.
 - Restart shell/API after editing `.env`.
+- This is expected when intentionally using in-memory fallback mode.
 
 ### Redis/BullMQ connection errors
 - Confirm `REDIS_URL=redis://localhost:6379`.
 - Check Redis container is healthy: `docker compose ps`.
+- If Redis is still unavailable, ingest falls back to in-memory fact extraction and the API remains usable.
+
+## 8) One-command local smoke E2E
+
+With API already running locally:
+
+```bash
+npm run smoke:e2e
+```
+
+Expected output:
+- `PASS` on success
+- `FAIL: ...` and non-zero exit code on first failed step
 
 ### Migration/connectivity failures
 - Wait for Postgres readiness, then rerun:

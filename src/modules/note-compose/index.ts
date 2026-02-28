@@ -7,7 +7,8 @@ import { requireMutationApiKey } from '../../plugins/apiKeyAuth.js';
 const composeSchema = z.object({
   sessionId: z.string(),
   division: z.enum(['medical', 'rehab', 'bh']),
-  noteFamily: z.string()
+  noteFamily: z.string(),
+  useExistingFacts: z.boolean().default(false)
 });
 
 const DIVISION_TEMPLATES: Record<'medical' | 'rehab' | 'bh', string[]> = {
@@ -19,6 +20,14 @@ const DIVISION_TEMPLATES: Record<'medical' | 'rehab' | 'bh', string[]> = {
 function buildDeterministicBody(division: 'medical' | 'rehab' | 'bh', noteFamily: string): string {
   const sections = DIVISION_TEMPLATES[division].map((heading) => `## ${heading}\n- `).join('\n\n');
   return `# ${division.toUpperCase()} ${noteFamily}\n\n${sections}`;
+}
+
+function appendFactSummary(body: string, factCount: number): string {
+  if (factCount === 0) {
+    return body;
+  }
+
+  return `${body}\n\n## Fact Signals\n- Included ${factCount} extracted fact(s) from ledger.`;
 }
 
 export const noteComposeRoutes: FastifyPluginAsync = async (app) => {
@@ -42,16 +51,30 @@ export const noteComposeRoutes: FastifyPluginAsync = async (app) => {
       );
     }
 
+    const facts = parsed.useExistingFacts
+      ? await app.repositories.facts.listBySession(parsed.sessionId)
+      : [];
+    const factCount = facts.length;
+
     const noteId = randomUUID();
     const note = await app.repositories.notes.insert({
       noteId,
       sessionId: parsed.sessionId,
       division: parsed.division,
       noteFamily: parsed.noteFamily,
-      body: buildDeterministicBody(parsed.division, parsed.noteFamily),
+      body: appendFactSummary(buildDeterministicBody(parsed.division, parsed.noteFamily), factCount),
       status: 'draft_created'
     });
 
-    return reply.send({ ok: true, data: note });
+    return reply.send({
+      ok: true,
+      data: {
+        ...note,
+        metadata: {
+          factCount,
+          usedExistingFacts: parsed.useExistingFacts
+        }
+      }
+    });
   });
 };

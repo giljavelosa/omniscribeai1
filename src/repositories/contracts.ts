@@ -85,6 +85,7 @@ export interface SessionsRepository {
 export interface SegmentsRepository {
   upsertMany(segments: Array<Omit<TranscriptSegment, 'createdAt' | 'updatedAt'>>): Promise<{ upserted: number }>;
   countBySession(sessionId: string): Promise<number>;
+  listBySession(sessionId: string): Promise<TranscriptSegment[]>;
 }
 
 export interface FactsRepository {
@@ -108,7 +109,7 @@ export interface WritebackRepository {
   insert(job: Omit<WritebackJob, 'createdAt' | 'updatedAt'>): Promise<WritebackJob>;
   getById(jobId: string): Promise<WritebackJob | null>;
   getByIdempotencyKey(idempotencyKey: string): Promise<WritebackJob | null>;
-  updateStatus(jobId: string, status: string, lastError?: string): Promise<void>;
+  updateStatus(jobId: string, status: string, lastError?: string, attempts?: number): Promise<void>;
 }
 
 export interface AuditRepository {

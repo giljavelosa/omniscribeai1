@@ -1,8 +1,23 @@
 import type { DbExecutor } from './db.js';
+import { mapTimestamps } from './db.js';
 import type { MemoryStore } from './memoryStore.js';
 import type { SegmentsRepository, TranscriptSegment } from './contracts.js';
 
 type SegmentInput = Omit<TranscriptSegment, 'createdAt' | 'updatedAt'>;
+
+function toSegment(row: Record<string, unknown>): TranscriptSegment {
+  const value = mapTimestamps(row);
+  return {
+    sessionId: String(value.session_id),
+    segmentId: String(value.segment_id),
+    speaker: value.speaker as TranscriptSegment['speaker'],
+    startMs: Number(value.start_ms),
+    endMs: Number(value.end_ms),
+    text: String(value.text),
+    createdAt: String(value.created_at),
+    updatedAt: String(value.updated_at)
+  };
+}
 
 export function createSegmentsRepository(db: DbExecutor | null, store: MemoryStore): SegmentsRepository {
   return {
@@ -59,6 +74,26 @@ export function createSegmentsRepository(db: DbExecutor | null, store: MemorySto
       );
 
       return Number(result.rows[0].count);
+    },
+
+    async listBySession(sessionId) {
+      if (!db) {
+        return Array.from(store.segments.get(sessionId)?.values() ?? []).sort(
+          (a, b) => a.startMs - b.startMs
+        );
+      }
+
+      const result = await db.query(
+        `
+          SELECT session_id, segment_id, speaker, start_ms, end_ms, text, created_at, updated_at
+          FROM transcript_segments
+          WHERE session_id = $1
+          ORDER BY start_ms ASC, segment_id ASC
+        `,
+        [sessionId]
+      );
+
+      return result.rows.map((row) => toSegment(row as Record<string, unknown>));
     }
   };
 }

@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { canTransitionNoteStatus } from '../../lib/noteStateMachine.js';
 import { sendApiError } from '../../lib/apiError.js';
 import { requireMutationApiKey } from '../../plugins/apiKeyAuth.js';
+import { resolveFailedTransition } from '../../workers/writebackWorker.js';
 
 const writebackSchema = z.object({
   noteId: z.string(),
@@ -20,12 +21,16 @@ const ALLOWED_JOB_TRANSITIONS: Record<string, Set<string>> = {
   queued: new Set(['in_progress', 'failed']),
   in_progress: new Set(['succeeded', 'failed']),
   failed: new Set(['queued']),
+  retryable_failed: new Set(['queued']),
+  dead_failed: new Set([]),
   succeeded: new Set([])
 };
 
 const JOB_TO_NOTE_STATUS: Record<string, string> = {
   queued: 'writeback_queued',
   in_progress: 'writeback_in_progress',
+  retryable_failed: 'writeback_failed',
+  dead_failed: 'writeback_failed',
   failed: 'writeback_failed',
   succeeded: 'writeback_succeeded'
 };
@@ -139,6 +144,11 @@ export const writebackRoutes: FastifyPluginAsync = async (app) => {
         );
       }
 
+      const failedTransition =
+        parsed.status === 'failed' ? resolveFailedTransition(job.attempts) : null;
+      const nextJobStatus = failedTransition?.status ?? parsed.status;
+      const nextAttempts = failedTransition?.nextAttempts ?? job.attempts;
+
       const note = await app.repositories.notes.getById(job.noteId);
       if (!note) {
         return sendApiError(
@@ -150,7 +160,7 @@ export const writebackRoutes: FastifyPluginAsync = async (app) => {
         );
       }
 
-      const nextNoteStatus = JOB_TO_NOTE_STATUS[parsed.status];
+      const nextNoteStatus = JOB_TO_NOTE_STATUS[nextJobStatus];
       if (!canTransitionNoteStatus(note.status, nextNoteStatus)) {
         return sendApiError(
           req,
@@ -161,7 +171,7 @@ export const writebackRoutes: FastifyPluginAsync = async (app) => {
         );
       }
 
-      await app.repositories.writeback.updateStatus(job.jobId, parsed.status, parsed.lastError);
+      await app.repositories.writeback.updateStatus(job.jobId, nextJobStatus, parsed.lastError, nextAttempts);
       await app.repositories.notes.updateStatus(note.noteId, nextNoteStatus);
 
       const updated = await app.repositories.writeback.getById(job.jobId);

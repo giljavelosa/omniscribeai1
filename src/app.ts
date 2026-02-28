@@ -9,6 +9,8 @@ import { factLedgerRoutes } from './modules/fact-ledger/index.js';
 import { noteComposeRoutes } from './modules/note-compose/index.js';
 import { validationGateRoutes } from './modules/validation-gate/index.js';
 import { writebackRoutes } from './modules/writeback/index.js';
+import { sessionsRoutes } from './modules/sessions/index.js';
+import { dataLayerPlugin } from './plugins/dataLayer.js';
 
 export function buildApp() {
   const app = Fastify({
@@ -28,10 +30,12 @@ export function buildApp() {
   app.register(correlationIdPlugin);
   app.register(securityLoggingPlugin);
   app.register(errorEnvelopePlugin);
+  app.register(dataLayerPlugin);
 
   app.get('/health', async () => ({ ok: true, service: 'omniscribeai1-api' }));
 
   app.register(transcriptIngestRoutes, { prefix: '/api/v1' });
+  app.register(sessionsRoutes, { prefix: '/api/v1' });
   app.register(factLedgerRoutes, { prefix: '/api/v1' });
   app.register(noteComposeRoutes, { prefix: '/api/v1' });
   app.register(validationGateRoutes, { prefix: '/api/v1' });

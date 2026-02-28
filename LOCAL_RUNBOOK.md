@@ -17,7 +17,7 @@ PORT=3000
 NODE_ENV=development
 LOG_LEVEL=info
 DATABASE_URL=postgresql://postgres:postgres@localhost:5433/omniscribe
-REDIS_URL=redis://localhost:6379
+REDIS_URL=redis://localhost:6380
 ```
 
 Notes:
@@ -177,7 +177,7 @@ This runs:
 
 ## 7) Troubleshooting
 
-### Port conflicts (3000 / 5433 / 6379)
+### Port conflicts (3000 / 5433 / 6380)
 - Update `PORT` in `.env` for API.
 - Stop local conflicting services or remap Docker ports in `docker-compose.yml`.
 
@@ -187,7 +187,7 @@ This runs:
 - This is expected when intentionally using in-memory fallback mode.
 
 ### Redis/BullMQ connection errors
-- Confirm `REDIS_URL=redis://localhost:6379`.
+- Confirm `REDIS_URL=redis://localhost:6380`.
 - Check Redis container is healthy: `docker compose ps`.
 - If Redis is still unavailable, ingest falls back to in-memory fact extraction and the API remains usable.
 

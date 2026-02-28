@@ -58,6 +58,32 @@ export function createNotesRepository(db: DbExecutor | null, store: MemoryStore)
       }
 
       return toNote(result.rows[0] as Record<string, unknown>);
+    },
+
+    async updateStatus(noteId, status) {
+      if (!db) {
+        const note = store.notes.get(noteId);
+        if (!note) {
+          return;
+        }
+
+        store.notes.set(noteId, {
+          ...note,
+          status,
+          updatedAt: new Date().toISOString()
+        });
+        return;
+      }
+
+      await db.query(
+        `
+          UPDATE composed_notes
+          SET status = $2,
+              updated_at = NOW()
+          WHERE note_id = $1
+        `,
+        [noteId, status]
+      );
     }
   };
 }

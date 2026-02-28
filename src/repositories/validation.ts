@@ -9,7 +9,7 @@ function toValidation(row: Record<string, unknown>): ValidationResult {
     resultId: String(value.result_id),
     noteId: String(value.note_id),
     sessionId: String(value.session_id),
-    status: String(value.status),
+    decision: value.decision as ValidationResult['decision'],
     unsupportedStatementRate: Number(value.unsupported_statement_rate),
     details: value.details as Record<string, unknown>,
     createdAt: String(value.created_at)
@@ -34,18 +34,18 @@ export function createValidationRepository(
             result_id,
             note_id,
             session_id,
-            status,
+            decision,
             unsupported_statement_rate,
             details
           )
           VALUES ($1, $2, $3, $4, $5, $6::jsonb)
-          RETURNING result_id, note_id, session_id, status, unsupported_statement_rate, details, created_at
+          RETURNING result_id, note_id, session_id, decision, unsupported_statement_rate, details, created_at
         `,
         [
           result.resultId,
           result.noteId,
           result.sessionId,
-          result.status,
+          result.decision,
           result.unsupportedStatementRate,
           JSON.stringify(result.details)
         ]
@@ -64,13 +64,39 @@ export function createValidationRepository(
 
       const result = await db.query(
         `
-          SELECT result_id, note_id, session_id, status, unsupported_statement_rate, details, created_at
+          SELECT result_id, note_id, session_id, decision, unsupported_statement_rate, details, created_at
           FROM validation_results
           WHERE session_id = $1
           ORDER BY created_at DESC
           LIMIT 1
         `,
         [sessionId]
+      );
+
+      if (result.rowCount === 0) {
+        return null;
+      }
+
+      return toValidation(result.rows[0] as Record<string, unknown>);
+    },
+
+    async getLatestByNote(noteId) {
+      if (!db) {
+        const matches = Array.from(store.validation.values())
+          .filter((result) => result.noteId === noteId)
+          .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+        return matches[matches.length - 1] ?? null;
+      }
+
+      const result = await db.query(
+        `
+          SELECT result_id, note_id, session_id, decision, unsupported_statement_rate, details, created_at
+          FROM validation_results
+          WHERE note_id = $1
+          ORDER BY created_at DESC
+          LIMIT 1
+        `,
+        [noteId]
       );
 
       if (result.rowCount === 0) {

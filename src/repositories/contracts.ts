@@ -42,11 +42,13 @@ export type ComposedNote = {
   updatedAt: string;
 };
 
+export type ValidationDecision = 'approved_for_writeback' | 'needs_review' | 'blocked';
+
 export type ValidationResult = {
   resultId: string;
   noteId: string;
   sessionId: string;
-  status: string;
+  decision: ValidationDecision;
   unsupportedStatementRate: number;
   details: Record<string, unknown>;
   createdAt: string;
@@ -56,6 +58,7 @@ export type WritebackJob = {
   jobId: string;
   noteId: string;
   ehr: 'nextgen' | 'webpt';
+  idempotencyKey: string;
   status: string;
   attempts: number;
   lastError: string | null;
@@ -92,15 +95,19 @@ export interface FactsRepository {
 export interface NotesRepository {
   insert(note: Omit<ComposedNote, 'createdAt' | 'updatedAt'>): Promise<ComposedNote>;
   getById(noteId: string): Promise<ComposedNote | null>;
+  updateStatus(noteId: string, status: string): Promise<void>;
 }
 
 export interface ValidationRepository {
   insert(result: Omit<ValidationResult, 'createdAt'>): Promise<ValidationResult>;
   getLatestBySession(sessionId: string): Promise<ValidationResult | null>;
+  getLatestByNote(noteId: string): Promise<ValidationResult | null>;
 }
 
 export interface WritebackRepository {
   insert(job: Omit<WritebackJob, 'createdAt' | 'updatedAt'>): Promise<WritebackJob>;
+  getById(jobId: string): Promise<WritebackJob | null>;
+  getByIdempotencyKey(idempotencyKey: string): Promise<WritebackJob | null>;
   updateStatus(jobId: string, status: string, lastError?: string): Promise<void>;
 }
 

@@ -45,7 +45,7 @@ CREATE TABLE IF NOT EXISTS validation_results (
   result_id TEXT PRIMARY KEY,
   note_id TEXT NOT NULL,
   session_id TEXT NOT NULL REFERENCES encounter_sessions(session_id) ON DELETE CASCADE,
-  status TEXT NOT NULL,
+  decision TEXT NOT NULL,
   unsupported_statement_rate NUMERIC(6,5) NOT NULL DEFAULT 0,
   details JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS writeback_jobs (
   job_id TEXT PRIMARY KEY,
   note_id TEXT NOT NULL,
   ehr TEXT NOT NULL,
+  idempotency_key TEXT NOT NULL UNIQUE,
   status TEXT NOT NULL,
   attempts INTEGER NOT NULL DEFAULT 0,
   last_error TEXT,

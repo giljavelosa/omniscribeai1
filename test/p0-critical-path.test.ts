@@ -13,7 +13,8 @@ async function getApp() {
 
 async function injectJson(method: 'POST' | 'GET', url: string, payload?: unknown) {
   const current = await getApp();
-  return current.inject({ method, url, payload });
+  const headers = method === 'POST' && process.env.API_KEY ? { 'x-api-key': process.env.API_KEY } : undefined;
+  return current.inject({ method, url, payload, headers });
 }
 
 afterEach(async () => {
@@ -24,7 +25,7 @@ afterEach(async () => {
 });
 
 describe('P0 API safety rails', () => {
-  it('rejects malformed transcript ingest payloads with a non-2xx error (no silent failure)', async () => {
+  it('rejects malformed transcript ingest payloads with 400 + error envelope (no silent failure)', async () => {
     const res = await injectJson('POST', '/api/v1/transcript-ingest', {
       sessionId: 'sess-1',
       segments: [
@@ -38,8 +39,7 @@ describe('P0 API safety rails', () => {
       ]
     });
 
-    expect(res.statusCode).toBeGreaterThanOrEqual(400);
-    expect(res.statusCode).toBeLessThan(600);
+    expect(res.statusCode).toBe(400);
 
     const body = res.json();
     expect(body).toMatchObject({
@@ -54,8 +54,7 @@ describe('P0 API safety rails', () => {
       ehr: 'nextgen'
     });
 
-    expect(res.statusCode).toBeGreaterThanOrEqual(400);
-    expect(res.statusCode).toBeLessThan(600);
+    expect(res.statusCode).toBe(400);
 
     const body = res.json();
     expect(body).toMatchObject({
@@ -120,7 +119,10 @@ describe('P0 API safety rails', () => {
     expect(writebackRes.statusCode).toBe(409);
     expect(writebackRes.json()).toMatchObject({
       ok: false,
-      error: 'writeback_precondition_failed'
+      error: {
+        code: 'WRITEBACK_PRECONDITION_FAILED',
+        message: expect.any(String)
+      }
     });
   });
 
@@ -147,7 +149,10 @@ describe('P0 API safety rails', () => {
     expect(webptRes.statusCode).toBe(400);
     expect(webptRes.json()).toMatchObject({
       ok: false,
-      error: 'unsupported_ehr_target'
+      error: {
+        code: 'UNSUPPORTED_EHR_TARGET',
+        message: expect.any(String)
+      }
     });
   });
 

@@ -205,4 +205,72 @@ describe('Phase2 Block5 writeback replay guard + history endpoint', () => {
 
     await app.close();
   });
+
+  it('keeps replay-status linkage visible in dead-letter list/detail/history after replay', async () => {
+    const app = buildApp();
+    const headers = { 'x-api-key': TEST_API_KEY };
+    const { jobId } = await createDeadLetterJob(app, headers, {
+      sessionId: 'sess-phase2-block5-replay-visibility',
+      idempotencyKey: 'idem-phase2-block5-replay-visibility',
+      lastError: 'payload rejected',
+      reasonCode: 'VALIDATION_ERROR'
+    });
+
+    const replay = await app.inject({
+      method: 'POST',
+      url: `/api/v1/operator/writeback/dead-letters/${jobId}/replay`,
+      headers
+    });
+    expect(replay.statusCode).toBe(200);
+    const replayJobId = replay.json().data.replayJob.jobId as string;
+
+    const list = await app.inject({ method: 'GET', url: '/api/v1/operator/writeback/dead-letters', headers });
+    expect(list.statusCode).toBe(200);
+    const listedOriginal = list.json().data.find((item: { jobId: string }) => item.jobId === jobId);
+    expect(listedOriginal).toMatchObject({ jobId, replayedJobId: replayJobId, replayOfJobId: null });
+
+    const detail = await app.inject({
+      method: 'GET',
+      url: `/api/v1/operator/writeback/dead-letters/${jobId}`,
+      headers
+    });
+    expect(detail.statusCode).toBe(200);
+    expect(detail.json().data.replayLinkage).toMatchObject({ replayedJobId: replayJobId, replayOfJobId: null });
+
+    const history = await app.inject({
+      method: 'GET',
+      url: `/api/v1/operator/writeback/dead-letters/${jobId}/history`,
+      headers
+    });
+    expect(history.statusCode).toBe(200);
+    expect(history.json().data.replayLinkage).toMatchObject({
+      replayedJobId: replayJobId,
+      replayOfJobId: null,
+      hasReplay: true,
+      isReplay: false
+    });
+
+    await app.close();
+  });
+
+  it('returns DEAD_LETTER_NOT_FOUND consistently across dead-letter endpoints', async () => {
+    const app = buildApp();
+    const headers = { 'x-api-key': TEST_API_KEY };
+    const missingJobId = '00000000-0000-4000-8000-000000000123';
+
+    const [detail, history, replay, acknowledge] = await Promise.all([
+      app.inject({ method: 'GET', url: `/api/v1/operator/writeback/dead-letters/${missingJobId}`, headers }),
+      app.inject({ method: 'GET', url: `/api/v1/operator/writeback/dead-letters/${missingJobId}/history`, headers }),
+      app.inject({ method: 'POST', url: `/api/v1/operator/writeback/dead-letters/${missingJobId}/replay`, headers }),
+      app.inject({ method: 'POST', url: `/api/v1/operator/writeback/dead-letters/${missingJobId}/acknowledge`, headers })
+    ]);
+
+    for (const res of [detail, history, replay, acknowledge]) {
+      expect(res.statusCode).toBe(404);
+      expect(res.json().error.code).toBe(DEAD_LETTER_ERROR_CODE.NOT_FOUND);
+    }
+
+    await app.close();
+  });
+
 });

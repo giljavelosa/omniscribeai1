@@ -9,9 +9,48 @@ if [[ -z "$BASE_REF" ]]; then
 fi
 
 echo "Running contract check against base ref: $BASE_REF"
-git fetch --no-tags --depth=1 origin "$BASE_REF"
+BASE_REMOTE_REF="origin/$BASE_REF"
+BASE_FETCH_REFSPEC="refs/heads/$BASE_REF:refs/remotes/origin/$BASE_REF"
 
-CHANGED_FILES=$(git diff --name-only "origin/$BASE_REF...HEAD")
+echo "Fetching base branch ref: $BASE_FETCH_REFSPEC"
+git fetch --no-tags --depth=1 origin "$BASE_FETCH_REFSPEC"
+
+resolve_merge_base() {
+  local merge_base=""
+  if merge_base=$(git merge-base HEAD "$BASE_REMOTE_REF" 2>/dev/null); then
+    echo "$merge_base"
+    return 0
+  fi
+
+  for deepen_by in 32 128 512; do
+    echo "Merge base not found yet; deepening clone by $deepen_by..." >&2
+    git fetch --no-tags --deepen="$deepen_by" origin "$BASE_FETCH_REFSPEC"
+    if merge_base=$(git merge-base HEAD "$BASE_REMOTE_REF" 2>/dev/null); then
+      echo "$merge_base"
+      return 0
+    fi
+  done
+
+  if [[ "$(git rev-parse --is-shallow-repository)" == "true" ]]; then
+    echo "Merge base still not found; unshallowing repository..." >&2
+    git fetch --no-tags --unshallow origin || git fetch --no-tags --depth=0 origin
+    if merge_base=$(git merge-base HEAD "$BASE_REMOTE_REF" 2>/dev/null); then
+      echo "$merge_base"
+      return 0
+    fi
+  fi
+
+  return 1
+}
+
+if MERGE_BASE=$(resolve_merge_base); then
+  DIFF_RANGE="$MERGE_BASE..HEAD"
+else
+  echo "WARN: Unable to compute merge-base; falling back to $BASE_REMOTE_REF..HEAD diff."
+  DIFF_RANGE="$BASE_REMOTE_REF..HEAD"
+fi
+
+CHANGED_FILES=$(git diff --name-only "$DIFF_RANGE")
 
 echo "Changed files:"
 echo "$CHANGED_FILES"

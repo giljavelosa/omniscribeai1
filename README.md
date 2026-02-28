@@ -40,3 +40,6 @@ docker compose up -d
 - `POST /api/v1/note-compose`
 - `POST /api/v1/validation-gate`
 - `POST /api/v1/writeback/jobs`
+
+## Local runbook
+- See [`LOCAL_RUNBOOK.md`](./LOCAL_RUNBOOK.md) for practical local bring-up (env vars, docker services, migrations, API start, end-to-end smoke curl flow, troubleshooting).

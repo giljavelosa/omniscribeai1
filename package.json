@@ -9,7 +9,11 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
     "lint": "eslint .",
-    "migrate": "tsx src/scripts/migrate.ts"
+    "migrate": "tsx src/scripts/migrate.ts",
+    "infra:up": "docker compose up -d db redis",
+    "infra:down": "docker compose down",
+    "infra:logs": "docker compose logs -f db redis",
+    "local:up": "npm run infra:up && npm run migrate && npm run dev"
   },
   "keywords": [],
   "author": "",

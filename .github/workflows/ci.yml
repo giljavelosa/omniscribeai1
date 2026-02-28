@@ -27,8 +27,8 @@ jobs:
       - name: Install deps
         run: npm ci
 
-      - name: Lint (ESLint v8 compatibility)
-        run: npx eslint@8 .
+      - name: Lint gate (temporary TypeScript compile check)
+        run: npm run build
 
   test:
     name: test

@@ -69,6 +69,8 @@ export type WritebackJob = {
   noteId: string;
   ehr: 'nextgen' | 'webpt';
   idempotencyKey: string;
+  replayOfJobId: string | null;
+  replayedJobId: string | null;
   status: string;
   attempts: number;
   lastError: string | null;
@@ -123,6 +125,12 @@ export type WritebackListFilters = {
   limit?: number;
 };
 
+export type DeadLetterListFilters = {
+  status?: 'retryable_failed' | 'dead_failed' | 'failed';
+  reason?: string;
+  limit?: number;
+};
+
 export type WritebackStatusSummary = {
   countsByStatus: Record<string, number>;
   recentFailures: {
@@ -147,8 +155,10 @@ export interface WritebackRepository {
   getById(jobId: string): Promise<WritebackJob | null>;
   getByIdempotencyKey(idempotencyKey: string): Promise<WritebackJob | null>;
   list(filters: WritebackListFilters): Promise<WritebackJob[]>;
+  listDeadLetters(filters: DeadLetterListFilters): Promise<WritebackJob[]>;
   getStatusSummary(sinceIso: string): Promise<WritebackStatusSummary>;
   updateStatus(jobId: string, status: string, update?: WritebackStatusUpdate): Promise<void>;
+  linkReplay(originalJobId: string, replayJobId: string): Promise<void>;
 }
 
 export interface AuditRepository {

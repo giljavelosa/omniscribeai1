@@ -175,7 +175,7 @@ describe('Block5 regressions: compose->validate->writeback and smoke contract', 
 
     const res = await current.inject({
       method: 'POST',
-      url: '/api/v1/writeback/jobs/missing-job-id/transition',
+      url: '/api/v1/writeback/jobs/00000000-0000-4000-8000-000000000999/transition',
       headers: { 'x-api-key': TEST_API_KEY },
       payload: { status: 'failed', lastError: 'transport timeout' }
     });

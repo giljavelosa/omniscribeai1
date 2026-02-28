@@ -2,6 +2,7 @@ import type { DbExecutor } from './db.js';
 import { mapTimestamps } from './db.js';
 import type { MemoryStore } from './memoryStore.js';
 import type {
+  DeadLetterListFilters,
   WritebackAttempt,
   WritebackJob,
   WritebackListFilters,
@@ -35,6 +36,8 @@ function toWritebackJob(row: Record<string, unknown>): WritebackJob {
     noteId: String(value.note_id),
     ehr: value.ehr as WritebackJob['ehr'],
     idempotencyKey: String(value.idempotency_key),
+    replayOfJobId: value.replay_of_job_id ? String(value.replay_of_job_id) : null,
+    replayedJobId: value.replayed_job_id ? String(value.replayed_job_id) : null,
     status: String(value.status),
     attempts: Number(value.attempts),
     lastError: value.last_error ? String(value.last_error) : null,
@@ -56,6 +59,24 @@ function applyListFilters(jobs: WritebackJob[], filters: WritebackListFilters): 
     .filter((job) => (stateFilter ? job.status === stateFilter : true))
     .filter((job) => (noteIdFilter ? job.noteId === noteIdFilter : true))
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    .slice(0, limit);
+}
+
+function applyDeadLetterFilters(jobs: WritebackJob[], filters: DeadLetterListFilters): WritebackJob[] {
+  const statusFilter = filters.status?.trim();
+  const reasonFilter = filters.reason?.trim().toUpperCase();
+  const limit = filters.limit ?? 50;
+
+  return jobs
+    .filter((job) => ['retryable_failed', 'dead_failed', 'failed'].includes(job.status))
+    .filter((job) => (statusFilter ? job.status === statusFilter : true))
+    .filter((job) => {
+      if (!reasonFilter) {
+        return true;
+      }
+      return toReasonCode(job.lastErrorDetail) === reasonFilter;
+    })
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
     .slice(0, limit);
 }
 
@@ -107,18 +128,22 @@ export function createWritebackRepository(
             note_id,
             ehr,
             idempotency_key,
+            replay_of_job_id,
+            replayed_job_id,
             status,
             attempts,
             last_error,
             last_error_detail,
             attempt_history
           )
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11::jsonb)
           RETURNING
             job_id,
             note_id,
             ehr,
             idempotency_key,
+            replay_of_job_id,
+            replayed_job_id,
             status,
             attempts,
             last_error,
@@ -132,6 +157,8 @@ export function createWritebackRepository(
           job.noteId,
           job.ehr,
           job.idempotencyKey,
+          job.replayOfJobId,
+          job.replayedJobId,
           job.status,
           job.attempts,
           job.lastError,
@@ -155,6 +182,8 @@ export function createWritebackRepository(
             note_id,
             ehr,
             idempotency_key,
+            replay_of_job_id,
+            replayed_job_id,
             status,
             attempts,
             last_error,
@@ -190,6 +219,8 @@ export function createWritebackRepository(
             note_id,
             ehr,
             idempotency_key,
+            replay_of_job_id,
+            replayed_job_id,
             status,
             attempts,
             last_error,
@@ -241,6 +272,8 @@ export function createWritebackRepository(
             note_id,
             ehr,
             idempotency_key,
+            replay_of_job_id,
+            replayed_job_id,
             status,
             attempts,
             last_error,
@@ -251,6 +284,57 @@ export function createWritebackRepository(
           FROM writeback_jobs
           ${whereClause}
           ORDER BY created_at DESC
+          LIMIT $${params.length}
+        `,
+        params
+      );
+
+      return result.rows.map((row) => toWritebackJob(row as Record<string, unknown>));
+    },
+
+    async listDeadLetters(filters) {
+      if (!db) {
+        return applyDeadLetterFilters(Array.from(store.writeback.values()), filters);
+      }
+
+      const whereParts = [`status IN ('retryable_failed', 'dead_failed', 'failed')`];
+      const params: Array<string | number> = [];
+
+      if (filters.status?.trim()) {
+        params.push(filters.status.trim());
+        whereParts.push(`status = $${params.length}`);
+      }
+
+      if (filters.reason?.trim()) {
+        params.push(filters.reason.trim().toUpperCase());
+        whereParts.push(
+          `COALESCE(NULLIF(UPPER(TRIM(last_error_detail->>'reasonCode')), ''), NULLIF(UPPER(TRIM(last_error_detail->>'code')), '')) = $${params.length}`
+        );
+      }
+
+      const requestedLimit = filters.limit ?? 50;
+      const safeLimit = Math.min(Math.max(Math.trunc(requestedLimit), 1), 100);
+      params.push(safeLimit);
+
+      const result = await db.query(
+        `
+          SELECT
+            job_id,
+            note_id,
+            ehr,
+            idempotency_key,
+            replay_of_job_id,
+            replayed_job_id,
+            status,
+            attempts,
+            last_error,
+            last_error_detail,
+            attempt_history,
+            created_at,
+            updated_at
+          FROM writeback_jobs
+          WHERE ${whereParts.join(' AND ')}
+          ORDER BY updated_at DESC
           LIMIT $${params.length}
         `,
         params
@@ -387,6 +471,49 @@ export function createWritebackRepository(
           update?.attemptHistory !== undefined,
           JSON.stringify(update?.attemptHistory ?? null)
         ]
+      );
+    },
+
+    async linkReplay(originalJobId, replayJobId) {
+      if (!db) {
+        const original = store.writeback.get(originalJobId);
+        if (original) {
+          store.writeback.set(originalJobId, {
+            ...original,
+            replayedJobId: replayJobId,
+            updatedAt: new Date().toISOString()
+          });
+        }
+
+        const replay = store.writeback.get(replayJobId);
+        if (replay) {
+          store.writeback.set(replayJobId, {
+            ...replay,
+            replayOfJobId: originalJobId,
+            updatedAt: new Date().toISOString()
+          });
+        }
+        return;
+      }
+
+      await db.query(
+        `
+          UPDATE writeback_jobs
+          SET replayed_job_id = $2,
+              updated_at = NOW()
+          WHERE job_id = $1
+        `,
+        [originalJobId, replayJobId]
+      );
+
+      await db.query(
+        `
+          UPDATE writeback_jobs
+          SET replay_of_job_id = $2,
+              updated_at = NOW()
+          WHERE job_id = $1
+        `,
+        [replayJobId, originalJobId]
       );
     }
   };

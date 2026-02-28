@@ -217,4 +217,138 @@ describe('phase3 pr1 core API contracts', () => {
 
     await app.close();
   });
+
+  it('returns 401 envelope when x-api-key is missing on core mutation endpoints', async () => {
+    const app = buildApp();
+
+    const requests = [
+      {
+        method: 'POST' as const,
+        url: '/api/v1/transcript-ingest',
+        payload: {
+          sessionId: 'sess-pr1-auth-missing',
+          division: 'medical',
+          segments: [
+            {
+              segmentId: 'seg-1',
+              speaker: 'clinician',
+              startMs: 0,
+              endMs: 1000,
+              text: 'auth-negative'
+            }
+          ]
+        }
+      },
+      {
+        method: 'POST' as const,
+        url: '/api/v1/note-compose',
+        payload: {
+          sessionId: 'sess-pr1-auth-missing',
+          division: 'medical',
+          noteFamily: 'progress_note'
+        }
+      },
+      {
+        method: 'POST' as const,
+        url: '/api/v1/validation-gate',
+        payload: {
+          noteId: 'note-auth-missing',
+          unsupportedStatementRate: 0.01
+        }
+      },
+      {
+        method: 'POST' as const,
+        url: '/api/v1/writeback/jobs',
+        payload: {
+          noteId: '00000000-0000-0000-0000-000000000000',
+          ehr: 'nextgen',
+          idempotencyKey: 'idem-pr1-auth-missing'
+        }
+      }
+    ];
+
+    for (const req of requests) {
+      const res = await app.inject(req);
+      expect(res.statusCode).toBe(401);
+      expect(res.json()).toMatchObject({
+        ok: false,
+        error: {
+          code: 'UNAUTHORIZED',
+          message: expect.any(String)
+        },
+        correlationId: expect.any(String)
+      });
+    }
+
+    await app.close();
+  });
+
+  it('returns 401 envelope when x-api-key is invalid on core mutation endpoints', async () => {
+    const app = buildApp();
+    const badHeaders = { 'x-api-key': 'invalid-pr1-key' };
+
+    const requests = [
+      {
+        method: 'POST' as const,
+        url: '/api/v1/transcript-ingest',
+        payload: {
+          sessionId: 'sess-pr1-auth-invalid',
+          division: 'medical',
+          segments: [
+            {
+              segmentId: 'seg-1',
+              speaker: 'clinician',
+              startMs: 0,
+              endMs: 1000,
+              text: 'auth-negative'
+            }
+          ]
+        }
+      },
+      {
+        method: 'POST' as const,
+        url: '/api/v1/note-compose',
+        payload: {
+          sessionId: 'sess-pr1-auth-invalid',
+          division: 'medical',
+          noteFamily: 'progress_note'
+        }
+      },
+      {
+        method: 'POST' as const,
+        url: '/api/v1/validation-gate',
+        payload: {
+          noteId: 'note-auth-invalid',
+          unsupportedStatementRate: 0.01
+        }
+      },
+      {
+        method: 'POST' as const,
+        url: '/api/v1/writeback/jobs',
+        payload: {
+          noteId: '00000000-0000-0000-0000-000000000000',
+          ehr: 'nextgen',
+          idempotencyKey: 'idem-pr1-auth-invalid'
+        }
+      }
+    ];
+
+    for (const req of requests) {
+      const res = await app.inject({
+        ...req,
+        headers: badHeaders
+      });
+      expect(res.statusCode).toBe(401);
+      expect(res.json()).toMatchObject({
+        ok: false,
+        error: {
+          code: 'UNAUTHORIZED',
+          message: expect.any(String)
+        },
+        correlationId: expect.any(String)
+      });
+    }
+
+    await app.close();
+  });
 });

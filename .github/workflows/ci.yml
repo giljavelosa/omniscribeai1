@@ -69,6 +69,9 @@ jobs:
         run: npm run build
 
       - name: Start app
+        env:
+          NODE_ENV: production
+          API_KEY: ci-smoke-api-key
         run: |
           npm run start > /tmp/omniscribe.log 2>&1 &
           echo $! > /tmp/omniscribe.pid
@@ -86,6 +89,9 @@ jobs:
           exit 1
 
       - name: Smoke E2E
+        env:
+          NODE_ENV: production
+          API_KEY: ci-smoke-api-key
         run: npm run smoke:e2e
 
       - name: Dump app logs on failure

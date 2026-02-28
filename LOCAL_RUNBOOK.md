@@ -82,10 +82,12 @@ Open a second terminal while API is running.
 BASE_URL=http://localhost:3000
 SESSION_ID=sess-local-001
 IDEMPOTENCY_KEY=idem-local-001
+API_KEY=local-dev-key
 
 # 1) ingest
 curl -s -X POST "$BASE_URL/api/v1/transcript-ingest" \
   -H 'content-type: application/json' \
+  -H "X-API-Key: $API_KEY" \
   -d '{
     "sessionId": "'"$SESSION_ID"'",
     "division": "medical",
@@ -110,6 +112,7 @@ curl -s -X POST "$BASE_URL/api/v1/transcript-ingest" \
 # 2) compose (capture noteId)
 COMPOSE_RESPONSE=$(curl -s -X POST "$BASE_URL/api/v1/note-compose" \
   -H 'content-type: application/json' \
+  -H "X-API-Key: $API_KEY" \
   -d '{
     "sessionId": "'"$SESSION_ID"'",
     "division": "medical",
@@ -122,6 +125,7 @@ NOTE_ID=$(echo "$COMPOSE_RESPONSE" | node -e 'let d="";process.stdin.on("data",c
 # 3) validate (medical + low unsupported rate => approved_for_writeback)
 curl -s -X POST "$BASE_URL/api/v1/validation-gate" \
   -H 'content-type: application/json' \
+  -H "X-API-Key: $API_KEY" \
   -d '{
     "noteId": "'"$NOTE_ID"'",
     "unsupportedStatementRate": 0.02
@@ -130,6 +134,7 @@ curl -s -X POST "$BASE_URL/api/v1/validation-gate" \
 # 4) writeback create (capture jobId)
 WRITEBACK_RESPONSE=$(curl -s -X POST "$BASE_URL/api/v1/writeback/jobs" \
   -H 'content-type: application/json' \
+  -H "X-API-Key: $API_KEY" \
   -d '{
     "noteId": "'"$NOTE_ID"'",
     "ehr": "nextgen",
@@ -147,6 +152,7 @@ curl -s "$BASE_URL/api/v1/sessions/$SESSION_ID/status"
 ```
 
 Expected outcome:
+- When API_KEY is configured, include `X-API-Key` on all mutation endpoints.
 - ingest returns `ok: true`
 - compose returns note with `status: "draft_created"`
 - validation returns `decision: "approved_for_writeback"`

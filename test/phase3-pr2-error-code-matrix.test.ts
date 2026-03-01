@@ -9,6 +9,8 @@ type EndpointCase = {
   url: string;
   payload: Record<string, unknown>;
   headers?: Record<string, string>;
+  expectedStatus: number;
+  expectedErrorCode: string;
 };
 
 type MatrixEntry = {
@@ -32,7 +34,7 @@ describe('phase3 pr2 deterministic error-code matrix snapshots', () => {
   it('snapshots allowed status and error-code matrix for core endpoints', async () => {
     const app = buildApp();
 
-    const missingApiKeyCases: EndpointCase[] = [
+    const testCases: EndpointCase[] = [
       {
         name: 'transcript-ingest unauthorized',
         method: 'POST',
@@ -49,7 +51,9 @@ describe('phase3 pr2 deterministic error-code matrix snapshots', () => {
               text: 'hello'
             }
           ]
-        }
+        },
+        expectedStatus: 401,
+        expectedErrorCode: 'UNAUTHORIZED'
       },
       {
         name: 'note-compose unauthorized',
@@ -59,7 +63,9 @@ describe('phase3 pr2 deterministic error-code matrix snapshots', () => {
           sessionId: 'sess-pr2-missing-auth',
           division: 'medical',
           noteFamily: 'progress_note'
-        }
+        },
+        expectedStatus: 401,
+        expectedErrorCode: 'UNAUTHORIZED'
       },
       {
         name: 'validation-gate unauthorized',
@@ -68,7 +74,9 @@ describe('phase3 pr2 deterministic error-code matrix snapshots', () => {
         payload: {
           noteId: 'note-pr2-missing-auth',
           unsupportedStatementRate: 0.01
-        }
+        },
+        expectedStatus: 401,
+        expectedErrorCode: 'UNAUTHORIZED'
       },
       {
         name: 'writeback/jobs unauthorized',
@@ -78,11 +86,10 @@ describe('phase3 pr2 deterministic error-code matrix snapshots', () => {
           noteId: '00000000-0000-0000-0000-000000000000',
           ehr: 'nextgen',
           idempotencyKey: 'idem-pr2-missing-auth'
-        }
-      }
-    ];
-
-    const authorizedCases: EndpointCase[] = [
+        },
+        expectedStatus: 401,
+        expectedErrorCode: 'UNAUTHORIZED'
+      },
       {
         name: 'transcript-ingest validation error',
         method: 'POST',
@@ -92,7 +99,9 @@ describe('phase3 pr2 deterministic error-code matrix snapshots', () => {
           sessionId: 'sess-pr2-ingest-validation',
           division: 'medical',
           segments: []
-        }
+        },
+        expectedStatus: 400,
+        expectedErrorCode: 'TRANSCRIPT_SEGMENTS_REQUIRED'
       },
       {
         name: 'note-compose validation error',
@@ -103,7 +112,9 @@ describe('phase3 pr2 deterministic error-code matrix snapshots', () => {
           sessionId: 'sess-pr2-compose-validation',
           division: 'medical',
           noteFamily: ''
-        }
+        },
+        expectedStatus: 400,
+        expectedErrorCode: 'VALIDATION_ERROR'
       },
       {
         name: 'validation-gate note missing',
@@ -113,7 +124,9 @@ describe('phase3 pr2 deterministic error-code matrix snapshots', () => {
         payload: {
           noteId: 'missing-pr2-note',
           unsupportedStatementRate: 0.01
-        }
+        },
+        expectedStatus: 404,
+        expectedErrorCode: 'NOTE_NOT_FOUND'
       },
       {
         name: 'writeback/jobs note missing',
@@ -124,7 +137,9 @@ describe('phase3 pr2 deterministic error-code matrix snapshots', () => {
           noteId: '00000000-0000-0000-0000-000000000000',
           ehr: 'nextgen',
           idempotencyKey: 'idem-pr2-note-missing'
-        }
+        },
+        expectedStatus: 404,
+        expectedErrorCode: 'NOTE_NOT_FOUND'
       },
       {
         name: 'writeback/jobs unsupported ehr target',
@@ -135,14 +150,22 @@ describe('phase3 pr2 deterministic error-code matrix snapshots', () => {
           noteId: '00000000-0000-0000-0000-000000000000',
           ehr: 'epic',
           idempotencyKey: 'idem-pr2-unsupported-ehr'
-        }
+        },
+        expectedStatus: 400,
+        expectedErrorCode: 'UNSUPPORTED_EHR_TARGET'
       }
     ];
 
-    const allCases = [...missingApiKeyCases, ...authorizedCases];
+    const observedOutcomes: Array<{
+      caseName: string;
+      endpoint: string;
+      status: number;
+      errorCode: string;
+    }> = [];
+
     const perEndpoint = new Map<string, { statuses: Set<number>; errorCodes: Set<string> }>();
 
-    for (const testCase of allCases) {
+    for (const testCase of testCases) {
       const response = await app.inject({
         method: testCase.method,
         url: testCase.url,
@@ -158,7 +181,15 @@ describe('phase3 pr2 deterministic error-code matrix snapshots', () => {
       };
 
       expect(body.ok).toBe(false);
-      expect(body.error?.code).toBeTruthy();
+      expect(body.error?.code).toBe(testCase.expectedErrorCode);
+      expect(response.statusCode).toBe(testCase.expectedStatus);
+
+      observedOutcomes.push({
+        caseName: testCase.name,
+        endpoint: testCase.url,
+        status: response.statusCode,
+        errorCode: body.error?.code as string
+      });
 
       const entry =
         perEndpoint.get(testCase.url) ??
@@ -171,6 +202,65 @@ describe('phase3 pr2 deterministic error-code matrix snapshots', () => {
       entry.errorCodes.add(body.error?.code as string);
       perEndpoint.set(testCase.url, entry);
     }
+
+    expect(observedOutcomes).toMatchInlineSnapshot(`
+      [
+        {
+          "caseName": "transcript-ingest unauthorized",
+          "endpoint": "/api/v1/transcript-ingest",
+          "errorCode": "UNAUTHORIZED",
+          "status": 401,
+        },
+        {
+          "caseName": "note-compose unauthorized",
+          "endpoint": "/api/v1/note-compose",
+          "errorCode": "UNAUTHORIZED",
+          "status": 401,
+        },
+        {
+          "caseName": "validation-gate unauthorized",
+          "endpoint": "/api/v1/validation-gate",
+          "errorCode": "UNAUTHORIZED",
+          "status": 401,
+        },
+        {
+          "caseName": "writeback/jobs unauthorized",
+          "endpoint": "/api/v1/writeback/jobs",
+          "errorCode": "UNAUTHORIZED",
+          "status": 401,
+        },
+        {
+          "caseName": "transcript-ingest validation error",
+          "endpoint": "/api/v1/transcript-ingest",
+          "errorCode": "TRANSCRIPT_SEGMENTS_REQUIRED",
+          "status": 400,
+        },
+        {
+          "caseName": "note-compose validation error",
+          "endpoint": "/api/v1/note-compose",
+          "errorCode": "VALIDATION_ERROR",
+          "status": 400,
+        },
+        {
+          "caseName": "validation-gate note missing",
+          "endpoint": "/api/v1/validation-gate",
+          "errorCode": "NOTE_NOT_FOUND",
+          "status": 404,
+        },
+        {
+          "caseName": "writeback/jobs note missing",
+          "endpoint": "/api/v1/writeback/jobs",
+          "errorCode": "NOTE_NOT_FOUND",
+          "status": 404,
+        },
+        {
+          "caseName": "writeback/jobs unsupported ehr target",
+          "endpoint": "/api/v1/writeback/jobs",
+          "errorCode": "UNSUPPORTED_EHR_TARGET",
+          "status": 400,
+        },
+      ]
+    `);
 
     const snapshotMatrix: MatrixEntry[] = Array.from(perEndpoint.entries())
       .sort(([left], [right]) => left.localeCompare(right))
